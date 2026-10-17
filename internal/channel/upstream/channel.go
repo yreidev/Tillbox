@@ -330,6 +330,12 @@ func (c *Channel) Prepay(ctx context.Context, o *store.Order, base string) (chan
 		return pay, err
 	}
 	if err := c.check(cr, m); err != nil {
+		var ue *Error
+		if errors.As(err, &ue) {
+			if ae := amountLimit(o.PayType, o.Amount, ue); ae != nil {
+				return pay, ae
+			}
+		}
 		return pay, err
 	}
 	pay.TradeNo = str(m, "trade_no")

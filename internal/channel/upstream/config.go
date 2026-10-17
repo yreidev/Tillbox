@@ -22,6 +22,8 @@ type Config struct {
 	PublicKey         string   `json:"public_key"`  // V2 商户公钥，由私钥算出，交给上游
 	PlatformPublicKey string   `json:"platform_public_key"`
 	Types             []string `json:"types"` // 开放的支付方式
+	// Limits 是各支付方式的单笔限额，见 limit.go。
+	Limits map[string]Limit `json:"limits,omitempty"`
 }
 
 // ParseConfig 解析渠道表里的配置，没填版本时按 V1。
@@ -47,18 +49,21 @@ type Input struct {
 	PrivateKey        string   `json:"private_key"`
 	PlatformPublicKey string   `json:"platform_public_key"`
 	Types             []string `json:"types"`
+	// Limits 为空时保留原来的限额。
+	Limits map[string]LimitInput `json:"limits"`
 }
 
 // View 是给后台看的配置，不含密钥。
 type View struct {
-	APIURL            string   `json:"api_url"`
-	Version           int      `json:"version"`
-	PID               string   `json:"pid"`
-	HasKey            bool     `json:"has_key"`
-	HasPrivateKey     bool     `json:"has_private_key"`
-	PublicKey         string   `json:"public_key"`
-	PlatformPublicKey string   `json:"platform_public_key"`
-	Types             []string `json:"types"`
+	APIURL            string               `json:"api_url"`
+	Version           int                  `json:"version"`
+	PID               string               `json:"pid"`
+	HasKey            bool                 `json:"has_key"`
+	HasPrivateKey     bool                 `json:"has_private_key"`
+	PublicKey         string               `json:"public_key"`
+	PlatformPublicKey string               `json:"platform_public_key"`
+	Types             []string             `json:"types"`
+	Limits            map[string]LimitView `json:"limits"`
 }
 
 // ViewOf 把渠道表里的配置转成后台看的样子。
@@ -70,7 +75,7 @@ func ViewOf(raw string) View {
 	}
 	return View{
 		APIURL: c.APIURL, Version: c.Version, PID: c.PID, HasKey: c.Key != "", HasPrivateKey: c.PrivateKey != "",
-		PublicKey: c.PublicKey, PlatformPublicKey: c.PlatformPublicKey, Types: types,
+		PublicKey: c.PublicKey, PlatformPublicKey: c.PlatformPublicKey, Types: types, Limits: limitViews(c),
 	}
 }
 
@@ -156,7 +161,11 @@ func Merge(box *secret.Box, cur string, in json.RawMessage, enabled bool) (strin
 			types = append(types, t)
 		}
 	}
-	c.APIURL, c.Version, c.PID, c.PlatformPublicKey, c.Types = api, v.Version, pid, platform, types
+	limits, err := mergeLimits(c.Limits, v.Limits, types)
+	if err != nil {
+		return "", err
+	}
+	c.APIURL, c.Version, c.PID, c.PlatformPublicKey, c.Types, c.Limits = api, v.Version, pid, platform, types, limits
 	if key != "" {
 		sealed, err := box.Seal(key)
 		if err != nil {

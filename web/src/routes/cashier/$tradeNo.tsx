@@ -38,6 +38,8 @@ interface Guide {
 interface PayTypeOption {
   type: string
   label: string
+  /** 这笔订单不能用这种方式的原因（超出的单笔限额），能用时没有 */
+  unavailable?: string
 }
 
 interface CashierOrder {
@@ -178,7 +180,8 @@ function Cashier() {
       setChoosing(false)
     },
     onError: (e) => {
-      if (e instanceof ApiError && e.status === 409) void q.refetch()
+      // 409 是订单状态变了；422 是金额超出这种方式的单笔限额，刷新后这种方式会标成不可用
+      if (e instanceof ApiError && (e.status === 409 || e.status === 422)) void q.refetch()
     },
   })
 
@@ -407,11 +410,17 @@ function Choose({
               variant={current ? 'secondary' : 'outline'}
               className="justify-between"
               isPending={busy === t.type}
-              isDisabled={!!busy && busy !== t.type}
+              isDisabled={!!t.unavailable || (!!busy && busy !== t.type)}
               onPress={() => onChoose(t.type)}
             >
               <span className="flex-1 text-left">{busy === t.type ? '正在获取付款信息…' : t.label}</span>
-              {current ? <Check className="text-accent" /> : <ChevronRight className="text-muted" />}
+              {t.unavailable ? (
+                <span className="text-sm font-normal text-muted">{t.unavailable}</span>
+              ) : current ? (
+                <Check className="text-accent" />
+              ) : (
+                <ChevronRight className="text-muted" />
+              )}
             </Button>
           )
         })}

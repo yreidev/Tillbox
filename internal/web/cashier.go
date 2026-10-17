@@ -108,14 +108,21 @@ func (c *cashier) get(w http.ResponseWriter, r *http.Request) {
 type payType struct {
 	Type  string `json:"type"`
 	Label string `json:"label"`
+	// Unavailable 是这笔订单不能用这种方式的原因（超出的单笔限额），能用时为空。
+	Unavailable string `json:"unavailable,omitempty"`
 }
 
 // upstreamGuide 给上游渠道的订单补上可选的支付方式；已经向上游预下单的，给出付款信息。
 func (c *cashier) upstreamGuide(r *http.Request, o *store.Order, cf channel.Confirmer, res map[string]any) {
 	types := cf.PayTypes()
 	opts := make([]payType, len(types))
+	l, _ := cf.(channel.Limiter)
 	for i, t := range types {
 		opts[i] = payType{Type: t, Label: channel.TypeLabel(t)}
+		var ae *channel.AmountError
+		if l != nil && errors.As(l.CheckAmount(t, o.Amount, time.Now()), &ae) {
+			opts[i].Unavailable = ae.Rule()
+		}
 	}
 	res["pay_types"], res["pay_type"] = opts, o.PayType
 	up, err := c.confirm.Payment(r.Context(), o.ID)
@@ -154,7 +161,8 @@ func (c *cashier) pay(w http.ResponseWriter, r *http.Request) {
 		jsonOut(w, http.StatusBadRequest, map[string]string{"error": "请选择支付方式"})
 		return
 	}
-	if cf, _ := c.confirm.Confirmer(o.Channel); cf == nil {
+	cf, _ := c.confirm.Confirmer(o.Channel)
+	if cf == nil {
 		jsonOut(w, http.StatusBadRequest, map[string]string{"error": "这个订单不用选择支付方式"})
 		return
 	} else if !slices.Contains(cf.PayTypes(), in.Type) {
@@ -162,9 +170,16 @@ func (c *cashier) pay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	up, err := c.confirm.Prepare(r.Context(), o, in.Type, c.baseURL(r))
+	var ae *channel.AmountError
 	switch {
 	case errors.Is(err, confirm.ErrNotPending):
 		jsonOut(w, http.StatusConflict, map[string]string{"error": "订单已经不是待支付状态，请刷新页面"})
+	case errors.As(err, &ae):
+		msg := ae.Message()
+		if len(cf.PayTypes()) > 1 {
+			msg += "，请换一种支付方式"
+		}
+		jsonOut(w, http.StatusUnprocessableEntity, map[string]string{"error": msg})
 	case err != nil:
 		jsonOut(w, http.StatusBadGateway, map[string]string{"error": "支付通道暂时不可用，请稍后重试或换一种支付方式"})
 	default:

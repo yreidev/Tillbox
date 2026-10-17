@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"tillbox/internal/epay"
 	"tillbox/internal/store"
 )
 
@@ -165,6 +166,40 @@ type Confirmer interface {
 	// VerifyNotify 校验上游的回调参数，返回确认的付款。
 	VerifyNotify(p map[string]string) (*Paid, error)
 }
+
+// Limiter 由有单笔金额限制的渠道实现（上游易支付）。
+type Limiter interface {
+	// CheckAmount 检查金额（分）在不在支付方式的单笔限额内，超出时返回 *AmountError。
+	CheckAmount(typ string, amount int64, now time.Time) error
+}
+
+// AmountError 是金额超出了支付方式的单笔限额。Error 给日志和后台看，被上游拒绝时是上游的原话；
+// Message 给付款人和调用方看。
+type AmountError struct {
+	Type     string
+	Min, Max int64 // 分，超出的那一边非 0
+	// Err 是上游拒单的原错误；按已知限额提前拦下时为空。
+	Err error
+}
+
+// Rule 是超出的那条限额，例如“单笔最低 0.30 元”。
+func (e *AmountError) Rule() string {
+	if e.Min > 0 {
+		return "单笔最低 " + epay.FormatCents(e.Min) + " 元"
+	}
+	return "单笔最高 " + epay.FormatCents(e.Max) + " 元"
+}
+
+func (e *AmountError) Message() string { return TypeLabel(e.Type) + e.Rule() }
+
+func (e *AmountError) Error() string {
+	if e.Err != nil {
+		return e.Err.Error()
+	}
+	return e.Message()
+}
+
+func (e *AmountError) Unwrap() error { return e.Err }
 
 // ErrAuth 表示凭据或权限错误。查账遇到它至少停 15 分钟。
 var ErrAuth = errors.New("渠道凭据或权限错误")

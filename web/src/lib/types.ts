@@ -228,6 +228,16 @@ export interface UpstreamConfig {
   public_key: string
   platform_public_key: string
   types: string[]
+  /** 各支付方式的单笔限额，没有限额的方式不出现 */
+  limits: Record<string, UpstreamLimit>
+}
+
+/** 上游渠道一种支付方式的单笔限额（元，不限为空）；*_at 是自动识别的时刻，0 表示手动设置 */
+export interface UpstreamLimit {
+  min: string
+  max: string
+  min_at: number
+  max_at: number
 }
 
 /** 上游渠道的预下单、查单和回调状态（服务重启后清零） */

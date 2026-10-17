@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/uptrace/bun"
 
@@ -266,6 +267,28 @@ func (r *Registry) SaveConfig(ctx context.Context, id int64, cfg string) error {
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
+	}
+	return r.Load(ctx)
+}
+
+// Learn 按一次预下单的结果更新上游渠道记下的单笔限额（见 upstream.Learn）。不改修改时间：这不是管理员改的。
+func (r *Registry) Learn(ctx context.Context, id int64, typ string, amount int64, prepayErr error, now time.Time) error {
+	// 大多数预下单什么都不用改，先拿内存里的配置判断，免得每次都排队读库。
+	if _, row, ok := r.Get(id); !ok || row.Type != store.ChannelEpay || upstream.Learn(row.Config, typ, amount, prepayErr, now) == "" {
+		return nil
+	}
+	r.saveMu.Lock()
+	defer r.saveMu.Unlock()
+	row, err := r.row(ctx, id)
+	if err != nil {
+		return err
+	}
+	cfg := upstream.Learn(row.Config, typ, amount, prepayErr, now)
+	if cfg == "" {
+		return nil
+	}
+	if _, err := r.db.NewUpdate().Model((*store.Channel)(nil)).Set("config = ?", cfg).Where("id = ?", id).Exec(ctx); err != nil {
+		return err
 	}
 	return r.Load(ctx)
 }

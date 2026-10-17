@@ -161,9 +161,23 @@ func (s *Service) Prepare(ctx context.Context, o *store.Order, typ, base string)
 			}
 			return up, nil
 		}
+		if l, ok := c.(channel.Limiter); ok {
+			if err := l.CheckAmount(typ, cur.Amount, s.Now()); err != nil {
+				return nil, err
+			}
+		}
 		next := *cur
 		next.PayType = typ
 		pay, err := c.Prepay(ctx, &next, base)
+		if lerr := s.channels.Learn(ctx, row.ID, typ, cur.Amount, err, s.Now()); lerr != nil {
+			slog.Error("记录上游限额失败", "channel", cur.Channel, "type", typ, "err", lerr)
+		}
+		var amountErr *channel.AmountError
+		if errors.As(err, &amountErr) {
+			// 金额超出上游的单笔限额是正常的业务拒绝，不算渠道失败
+			slog.Info("上游拒绝：金额超出单笔限额", "trade_no", cur.TradeNo, "channel", cur.Channel, "type", typ, "err", err)
+			return nil, err
+		}
 		if err != nil {
 			s.record(o.Channel, func(st *Status, now int64) { st.PrepayErrAt, st.PrepayErr = now, err.Error(); st.Failures++ })
 			slog.Warn("上游预下单失败", "trade_no", cur.TradeNo, "channel", cur.Channel, "type", typ, "err", err)

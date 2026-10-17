@@ -253,6 +253,23 @@ func (s *Server) createOrder(r *http.Request, p epay.Params, version int, isSubm
 		}
 		return nil, fail(-1, "暂不支持%s，请使用%s付款", label, channel.TypeLabels(types))
 	}
+	// 已知金额超出单笔限额时不建单：指定了方式就看这一种，留给付款人选的要每种都超出才拦。
+	if l, ok := ch.(channel.Limiter); ok {
+		check := types
+		if typ != "" {
+			check = []string{typ}
+		}
+		var msgs []string
+		for _, t := range check {
+			var ae *channel.AmountError
+			if errors.As(l.CheckAmount(t, amount, s.now()), &ae) {
+				msgs = append(msgs, ae.Message())
+			}
+		}
+		if len(msgs) > 0 && len(msgs) == len(check) {
+			return nil, fail(-1, "%s", strings.Join(msgs, "，"))
+		}
+	}
 
 	name = cutUTF8(name, 127)
 	o, _, err := s.Orders.Create(ctx, order.CreateInput{
@@ -271,6 +288,10 @@ func (s *Server) createOrder(r *http.Request, p epay.Params, version int, isSubm
 	// 上游渠道：知道支付方式就当场向上游预下单。失败时订单保持待支付，调用方用同一订单号重试会再预下单。
 	if cf, _ := s.Confirm.Confirmer(o.Channel); cf != nil && typ != "" {
 		if _, err := s.Confirm.Prepare(ctx, o, typ, s.BaseURL(r)); err != nil {
+			var ae *channel.AmountError
+			if errors.As(err, &ae) {
+				return nil, fail(-1, "%s", ae.Message())
+			}
 			return nil, fail(-2, "支付通道暂时不可用，请稍后重试")
 		}
 	}

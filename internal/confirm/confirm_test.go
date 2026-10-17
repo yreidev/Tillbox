@@ -3,11 +3,14 @@ package confirm_test
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -477,6 +480,165 @@ func TestCashierChoosesType(t *testing.T) {
 	}
 	if r, _ := postJSON(t, p.down, base+"/pay", map[string]string{"type": "alipay"}); r.Status != http.StatusConflict {
 		t.Errorf("已支付后再选方式：%d", r.Status)
+	}
+}
+
+// 上游的单笔限额：被拒时自动识别，之后下单和收银台提前拦下并说明原因；过期后交给上游，下单成功就放宽。
+func TestUpstreamLimits(t *testing.T) {
+	p := setup(t, 1)
+	// 在 up 前面挡一层：低于最低金额的预下单按彩虹易支付的原话拒绝，其余转给 up。
+	target, err := url.Parse(p.up.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	var mu sync.Mutex
+	floor, calls := int64(30), 0
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/mapi.php" {
+			_ = r.ParseForm()
+			cents, _ := epay.ParseMoney(r.PostForm.Get("money"))
+			mu.Lock()
+			calls++
+			lo := floor
+			mu.Unlock()
+			if cents < lo {
+				_ = json.NewEncoder(w).Encode(map[string]any{"code": -2, "msg": "最小支付金额是0.3元"})
+				return
+			}
+			body := r.PostForm.Encode()
+			r.Body, r.ContentLength = io.NopCloser(strings.NewReader(body)), int64(len(body))
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	t.Cleanup(front.Close)
+	count := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return calls
+	}
+	cfg := upstream.Input{APIURL: front.URL, Version: 1, PID: p.um.PID(), Key: p.um.Key, Types: []string{"alipay", "wxpay"}}
+	if res := p.a.Call("PUT", fmt.Sprintf("/web-api/admin/channels/%d", p.ch.ID), map[string]any{"name": "上游 A", "enabled": true, "config": cfg}); res.Status != http.StatusOK {
+		t.Fatalf("改渠道：%d %s", res.Status, res.Body)
+	}
+	mapi := func(out, typ, money string) map[string]any {
+		t.Helper()
+		params := map[string]string{"out_trade_no": out, "notify_url": p.down.Hook.URL + "/n", "name": "测试商品", "money": money, "clientip": "1.1.1.1"}
+		if typ != "" {
+			params["type"] = typ
+		}
+		return p.down.PostForm("/mapi.php", p.dm.SignMD5(params)).JSON(t)
+	}
+	limits := func() map[string]upstream.LimitView {
+		t.Helper()
+		var list struct {
+			Items []struct {
+				ID     int64 `json:"id"`
+				Config struct {
+					Limits map[string]upstream.LimitView `json:"limits"`
+				} `json:"config"`
+			} `json:"items"`
+		}
+		res := p.a.Call("GET", "/web-api/admin/channels", nil)
+		if err := json.Unmarshal(res.Body, &list); err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range list.Items {
+			if c.ID == p.ch.ID {
+				return c.Config.Limits
+			}
+		}
+		t.Fatal("渠道列表里没有上游渠道")
+		return nil
+	}
+
+	// 第一次：上游拒绝，原因直接告诉调用方；记下限额，不算渠道失败。
+	if res := mapi("L1", "alipay", "0.01"); fmt.Sprint(res["code"]) != "-1" || res["msg"] != "支付宝单笔最低 0.30 元" || count() != 1 {
+		t.Fatalf("低于上游最低金额：%v，上游收到 %d 次", res, count())
+	}
+	if st := p.down.App.Confirm.Status(p.ch.Key()); st.Failures != 0 || st.PrepayErr != "" {
+		t.Errorf("金额被拒不算渠道失败：%+v", st)
+	}
+	if l := limits()["alipay"]; l.Min != "0.30" || l.MinAt == 0 {
+		t.Fatalf("后台看到的限额：%+v", limits())
+	}
+	// 再下同样金额的单：不问上游，也不建单；够最低金额的照常。
+	if res := mapi("L2", "alipay", "0.01"); fmt.Sprint(res["code"]) != "-1" || res["msg"] != "支付宝单笔最低 0.30 元" || count() != 1 {
+		t.Fatalf("已知限额：%v，上游收到 %d 次", res, count())
+	}
+	if _, err := p.down.App.Orders.Find(p.down.Ctx, p.dm.ID, "", "L2"); err == nil {
+		t.Error("已知超出限额时不该建单")
+	}
+	if res := mapi("L3", "alipay", "0.30"); fmt.Sprint(res["code"]) != "1" || count() != 2 {
+		t.Fatalf("够最低金额：%v", res)
+	}
+
+	// 收银台：没指定方式的订单，支付宝标成不可用，微信照常可选。
+	form := p.dm.SignMD5(map[string]string{"out_trade_no": "L4", "notify_url": p.down.Hook.URL + "/n", "return_url": p.down.Hook.URL + "/r", "name": "测试商品", "money": "0.01"})
+	if res := p.down.PostForm("/submit.php", form); res.Status != http.StatusSeeOther {
+		t.Fatalf("跳转下单：%d %s", res.Status, res.Body)
+	}
+	o, err := p.down.App.Orders.Find(p.down.Ctx, p.dm.ID, "", "L4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := "/web-api/cashier/" + o.TradeNo
+	unavailable := func() map[string]string {
+		t.Helper()
+		out := map[string]string{}
+		types, _ := p.down.Get(base).JSON(t)["pay_types"].([]any)
+		for _, x := range types {
+			m, _ := x.(map[string]any)
+			out[fmt.Sprint(m["type"])], _ = m["unavailable"].(string)
+		}
+		return out
+	}
+	if u := unavailable(); len(u) != 2 || u["alipay"] != "单笔最低 0.30 元" || u["wxpay"] != "" {
+		t.Fatalf("收银台的支付方式：%v", u)
+	}
+	if r, m := postJSON(t, p.down, base+"/pay", map[string]string{"type": "alipay"}); r.Status != http.StatusUnprocessableEntity || m["error"] != "支付宝单笔最低 0.30 元，请换一种支付方式" || count() != 2 {
+		t.Errorf("选支付宝：%d %v，上游收到 %d 次", r.Status, m, count())
+	}
+	if r, m := postJSON(t, p.down, base+"/pay", map[string]string{"type": "wxpay"}); r.Status != http.StatusUnprocessableEntity || m["error"] != "微信支付单笔最低 0.30 元，请换一种支付方式" || count() != 3 {
+		t.Errorf("选微信：%d %v，上游收到 %d 次", r.Status, m, count())
+	}
+	// 每种方式都低于最低金额：不建单，说明各自的限额。
+	form = p.dm.SignMD5(map[string]string{"out_trade_no": "L5", "notify_url": p.down.Hook.URL + "/n", "return_url": p.down.Hook.URL + "/r", "name": "测试商品", "money": "0.01"})
+	if res := p.down.PostForm("/submit.php", form); !strings.Contains(string(res.Body), "支付宝单笔最低 0.30 元，微信支付单笔最低 0.30 元") {
+		t.Errorf("每种方式都超出限额：%d %s", res.Status, res.Body)
+	}
+
+	// 过了 24 小时：不再提前拦下；上游已经放宽，下单成功后清掉支付宝的限额。
+	var row store.Channel
+	if err := p.down.DB().NewSelect().Model(&row).Where("id = ?", p.ch.ID).Scan(p.down.Ctx); err != nil {
+		t.Fatal(err)
+	}
+	c, err := upstream.ParseConfig(row.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for typ, l := range c.Limits {
+		l.MinAt -= (upstream.LimitTrust + time.Hour).Milliseconds()
+		c.Limits[typ] = l
+	}
+	b, _ := json.Marshal(c)
+	if _, err := p.down.DB().NewUpdate().Model((*store.Channel)(nil)).Set("config = ?", string(b)).Where("id = ?", p.ch.ID).Exec(p.down.Ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.down.App.Channels.Load(p.down.Ctx); err != nil {
+		t.Fatal(err)
+	}
+	if u := unavailable(); u["alipay"] != "" || u["wxpay"] != "" {
+		t.Errorf("限额过期后：%v", u)
+	}
+	mu.Lock()
+	floor = 0
+	mu.Unlock()
+	if r, m := postJSON(t, p.down, base+"/pay", map[string]string{"type": "alipay"}); r.Status != http.StatusOK || count() != 4 {
+		t.Fatalf("上游放宽后选支付宝：%d %v", r.Status, m)
+	}
+	if l := limits(); len(l) != 1 || l["wxpay"].Min != "0.30" {
+		t.Errorf("下单成功后放宽支付宝，微信不变：%+v", l)
 	}
 }
 

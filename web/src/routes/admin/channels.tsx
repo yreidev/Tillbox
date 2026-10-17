@@ -33,10 +33,10 @@ import {
   TrashBin,
 } from '@gravity-ui/icons'
 import { api, channelsQuery, meQuery } from '../../lib/api'
-import { relative } from '../../lib/format'
+import { relative, time } from '../../lib/format'
 import { useNow } from '../../lib/now'
 import { decodeQRImage } from '../../lib/qrdecode'
-import type { AlipayQRConfig, ChannelType, ChannelView, UpstreamConfig } from '../../lib/types'
+import type { AlipayQRConfig, ChannelType, ChannelView, UpstreamConfig, UpstreamLimit } from '../../lib/types'
 import { channelTypeText, ledgerErrorText, payTypeLabel, payTypeText } from '../../lib/types'
 import {
   Code,
@@ -309,12 +309,19 @@ function ChannelCard({
         <Health c={c} />
       </div>
       {!!c.pay_types?.length && (
-        <div className="flex flex-wrap gap-1">
-          {c.pay_types.map((t) => (
-            <Pill key={t} tone="accent">
-              {payTypeLabel(t)}
-            </Pill>
-          ))}
+        <div className="flex flex-col gap-1.5">
+          <div className="flex flex-wrap gap-1">
+            {c.pay_types.map((t) => {
+              const l = limitsOf(c)[t]
+              return (
+                <Pill key={t} tone="accent">
+                  {payTypeLabel(t)}
+                  {l && <span className="opacity-70"> · {limitText(l)}</span>}
+                </Pill>
+              )
+            })}
+          </div>
+          <LearnedLimits c={c} />
         </div>
       )}
       <dl className="grid grid-cols-3 rounded-xl bg-default/60 py-2.5 text-center">
@@ -376,6 +383,26 @@ function ChannelCard({
       </div>
     </Card>
   )
+}
+
+const limitsOf = (c: ChannelView): Record<string, UpstreamLimit> =>
+  c.type === 'epay' ? ((c.config as UpstreamConfig).limits ?? {}) : {}
+
+// limitText 把单笔限额写成“0.30 元起”“0.30–500.00 元”“500.00 元以内”。
+function limitText(l: { min: string; max: string }) {
+  if (l.min && l.max) return `${l.min}–${l.max} 元`
+  return l.min ? `${l.min} 元起` : `${l.max} 元以内`
+}
+
+// LearnedLimits 列出从上游拒单原话里自动识别的限额，让管理员知道这些不是自己填的。
+function LearnedLimits({ c }: { c: ChannelView }) {
+  const now = useNow()
+  const items = Object.entries(limitsOf(c)).flatMap(([t, l]) => [
+    ...(l.min_at ? [`${payTypeLabel(t)}最低 ${l.min} 元（${relative(l.min_at, now)}）`] : []),
+    ...(l.max_at ? [`${payTypeLabel(t)}最高 ${l.max} 元（${relative(l.max_at, now)}）`] : []),
+  ])
+  if (!items.length) return null
+  return <p className="text-xs text-muted">上游拒单时自动识别：{items.join('，')}</p>
 }
 
 // Health 是渠道的运行情况：经营码看查账，上游看查单和回调。
@@ -943,7 +970,13 @@ interface UpstreamValues extends Base {
   key: string
   platform_public_key: string
   types: string[]
+  limits: Record<string, { min: string; max: string }>
 }
+
+const noLimit = { min: '', max: '' }
+
+const checkYuan = (x: string) =>
+  !x.trim() || /^\d{1,8}(\.\d{1,2})?$/.test(x.trim()) ? null : '填多少元，例如 0.30；不限就留空'
 
 function UpstreamForm({ c, onCreated }: { c?: ChannelView; onCreated: (id: number) => void }) {
   const u = (c?.config ?? {}) as Partial<UpstreamConfig>
@@ -961,7 +994,10 @@ function UpstreamForm({ c, onCreated }: { c?: ChannelView; onCreated: (id: numbe
     key: '',
     platform_public_key: u.platform_public_key ?? '',
     types: u.types ?? ['alipay'],
+    limits: Object.fromEntries(Object.entries(u.limits ?? {}).map(([t, l]) => [t, { min: l.min, max: l.max }])),
   }))
+  const setLimit = (t: string, side: 'min' | 'max', x: string) =>
+    set('limits', { ...v.limits, [t]: { ...(v.limits[t] ?? noLimit), [side]: x } })
   const submit = async (privateKey = '') => {
     const ok = await save(v, {
       api_url: v.api_url,
@@ -971,6 +1007,7 @@ function UpstreamForm({ c, onCreated }: { c?: ChannelView; onCreated: (id: numbe
       private_key: privateKey,
       platform_public_key: v.platform_public_key,
       types: v.types,
+      limits: Object.fromEntries(v.types.map((t) => [t, v.limits[t] ?? noLimit])),
     })
     if (ok) {
       set('key', '')
@@ -1119,6 +1156,46 @@ function UpstreamForm({ c, onCreated }: { c?: ChannelView; onCreated: (id: numbe
               </p>
             )}
           </Section>
+          {v.types.length > 0 && (
+            <Section title="单笔限额">
+              <p className="text-xs text-muted">
+                留空表示不限。上游以金额为由拒单时（例如“最小支付金额是0.3元”）会自动填上，24
+                小时内金额不在范围里的订单直接请付款人换一种方式；手动填的一直有效。
+              </p>
+              {v.types.map((t) => {
+                const l = v.limits[t] ?? noLimit
+                const saved = u.limits?.[t]
+                const learned = [
+                  saved?.min_at && saved.min === l.min.trim() ? `最低金额于 ${time(saved.min_at, false)} 自动识别` : '',
+                  saved?.max_at && saved.max === l.max.trim() ? `最高金额于 ${time(saved.max_at, false)} 自动识别` : '',
+                ].filter(Boolean)
+                return (
+                  <div key={t} className="flex flex-col gap-2">
+                    <p className="text-sm">{payTypeLabel(t)}</p>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <TextInput
+                        label="最低金额（元）"
+                        inputMode="decimal"
+                        placeholder="不限"
+                        value={l.min}
+                        onChange={(x) => setLimit(t, 'min', x)}
+                        validate={checkYuan}
+                      />
+                      <TextInput
+                        label="最高金额（元）"
+                        inputMode="decimal"
+                        placeholder="不限"
+                        value={l.max}
+                        onChange={(x) => setLimit(t, 'max', x)}
+                        validate={checkYuan}
+                      />
+                    </div>
+                    {learned.length > 0 && <p className="text-xs text-muted">{learned.join('，')}</p>}
+                  </div>
+                )
+              })}
+            </Section>
+          )}
           <EnableField c={c} v={v} set={setBase} />
         </Form>
       </Drawer.Body>
