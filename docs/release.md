@@ -48,7 +48,7 @@
    gh workflow run check.yml -f tag=vx.y.z
    ```
 
-   GHCR 上第一次出现这个包时默认是私有的，要在 GitHub 个人主页的 Packages → tillbox → Package settings → Change visibility 改成公开，只需改一次。
+   包由本仓库的工作流创建，可见性跟随仓库，是公开的，不登录也能拉取。
 
 4. 不经过 CI、在本机构建镜像：
 
