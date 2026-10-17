@@ -29,7 +29,7 @@ docker compose up -d --build
 docker compose logs tillbox
 ```
 
-镜像仅构建 `linux/amd64`。容器默认只把端口发布到本机，数据保存在命名卷中。上线前设置公网地址、HTTPS 反向代理和支付渠道。
+镜像仅构建 `linux/amd64`，每个版本也发布在 `ghcr.io/yreidev/tillbox`。容器默认只把端口发布到本机，数据保存在命名卷中。上线前设置公网地址、HTTPS 反向代理和支付渠道。
 
 ## 文档
 

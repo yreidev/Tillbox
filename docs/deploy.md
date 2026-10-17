@@ -26,7 +26,13 @@ docker compose logs tillbox
 
 示例 Compose 只发布 `127.0.0.1:8080`，并使用命名卷保存 `/data`。容器以 UID/GID 10001 运行。改成宿主机目录挂载时，先将该目录的所有者设为 `10001:10001`，否则无法写入主密钥和数据库。
 
-镜像仅支持 `linux/amd64`，在本地构建，不会自动上传到仓库：
+镜像仅支持 `linux/amd64`。示例 Compose 从源码构建；也可以直接用发布好的镜像，把 `compose.yaml` 里的 `build` 去掉，`image` 改成具体版本：
+
+```yaml
+image: ghcr.io/yreidev/tillbox:0.3.0
+```
+
+每个版本发布时 CI 会推送 `ghcr.io/yreidev/tillbox:x.y.z`，最新版本另有 `latest` 标签；正式运行写具体版本号，升级时再改。只在本机构建镜像：
 
 ```sh
 make image VERSION=dev

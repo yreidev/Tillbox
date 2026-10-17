@@ -38,7 +38,17 @@
    git push origin main vx.y.z
    ```
 
-   GitHub Actions 会跑一遍检查；标签还会构建 linux/amd64 镜像，镜像归档和 SHA256 在这次运行的 Artifacts 里（`tillbox-image-linux-amd64`）。不会推送到任何镜像仓库。
+   GitHub Actions 会跑一遍检查；标签检查通过后还会构建 linux/amd64 镜像：
+   - 推到 GHCR：`ghcr.io/yreidev/tillbox:x.y.z`；这个标签是所有版本里最新的，还会更新 `latest`。
+   - 镜像归档和 SHA256 存在这次运行的 Artifacts 里（`tillbox-image-linux-amd64`），保留 90 天。
+
+   推送失败或要给以前的版本补推时，手动跑一次，会从那个标签的源码重新构建，不再跑检查：
+
+   ```sh
+   gh workflow run check.yml -f tag=vx.y.z
+   ```
+
+   GHCR 上第一次出现这个包时默认是私有的，要在 GitHub 个人主页的 Packages → tillbox → Package settings → Change visibility 改成公开，只需改一次。
 
 4. 不经过 CI、在本机构建镜像：
 
