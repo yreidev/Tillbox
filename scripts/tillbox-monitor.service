@@ -1,0 +1,13 @@
+[Unit]
+Description=Tillbox payment, ledger, notification, backup and disk checks
+After=k3s.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# 部署信息（公网就绪地址、命名空间、告警目标）写在这个文件里，变量说明见 docs/operations.md。
+EnvironmentFile=/etc/tillbox-monitor.env
+ExecStart=/usr/bin/python3 /usr/local/lib/tillbox-monitor/tillbox-monitor.py
+TimeoutStartSec=240
+UMask=0077
+StateDirectory=tillbox-monitor

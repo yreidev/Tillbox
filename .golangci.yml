@@ -1,0 +1,31 @@
+version: "2"
+run:
+  # 官方 SDK 互通测试也要检查
+  build-tags: [interop]
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - copyloopvar
+    - errorlint
+    - misspell
+    - nilerr
+    - rowserrcheck
+    - sqlclosecheck
+    - unconvert
+    - usestdlibvars
+  settings:
+    staticcheck:
+      # 默认集合之外再关掉德摩根律改写建议：条件按业务含义写更好读
+      checks: ["all", "-ST1000", "-ST1003", "-ST1016", "-ST1020", "-ST1021", "-ST1022", "-QF1001"]
+  exclusions:
+    presets:
+      # 惯用的忽略：延迟关闭、写响应体、清理路径上的 Close 等
+      - std-error-handling
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes: [tillbox]

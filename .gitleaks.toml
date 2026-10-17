@@ -1,0 +1,11 @@
+# gitleaks 的配置：用默认规则，只放行签名测试向量。
+# 这两个文件里的 MD5 密钥和 RSA 私钥是生成测试向量时一次性产生的，只用于测试，不对应任何真实商户。
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "签名测试向量里的测试密钥"
+paths = [
+  '''internal/epay/testdata/sign_vectors\.json$''',
+  '''scripts/sign-vectors/gen\.php$''',
+]

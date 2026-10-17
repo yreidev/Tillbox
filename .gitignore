@@ -1,0 +1,19 @@
+# 构建产物
+/bin/
+/data/
+/internal/webui/dist/*
+!/internal/webui/dist/.gitkeep
+/web/node_modules/
+/web/tsconfig.tsbuildinfo
+*.test
+coverage.out
+__pycache__/
+.env
+.env.*
+/web/.env
+/web/.env.*
+# heroui-agents-md
+.heroui-docs/
+
+# 本机自己的提交钩子（例如私有关键词检查），见 docs/development.md
+lefthook-local.yml

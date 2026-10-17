@@ -1,0 +1,4 @@
+# HeroUI v3 官方 MCP（https://heroui.com/en/docs/react/getting-started/mcp-server）。
+[mcp_servers.heroui-react]
+command = "npx"
+args = ["-y", "@heroui/react-mcp@latest"]

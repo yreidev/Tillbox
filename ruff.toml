@@ -1,0 +1,9 @@
+# 巡检脚本跑在宿主机自带的 python3 上，按较老的 3.10 写
+target-version = "py310"
+line-length = 120
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[format]
+quote-style = "single"

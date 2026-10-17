@@ -1,0 +1,18 @@
+services:
+  tillbox:
+    platform: linux/amd64
+    build:
+      context: .
+    image: tillbox:local
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      TILLBOX_PUBLIC_URL: "${TILLBOX_PUBLIC_URL:-http://localhost:8080}"
+      TILLBOX_TRUSTED_PROXIES: "${TILLBOX_TRUSTED_PROXIES:-}"
+      TZ: Asia/Shanghai
+    volumes:
+      - tillbox-data:/data
+
+volumes:
+  tillbox-data:

@@ -1,0 +1,30 @@
+# 提交钩子，`make deps` 会装上。只检查这次暂存的文件，不改文件；要格式化就跑 `make fmt`。
+# 本机额外的检查（例如私有关键词）写在 lefthook-local.yml，它不入库，见 docs/development.md。
+pre-commit:
+  parallel: true
+  jobs:
+    - name: go-format
+      glob: "*.go"
+      run: golangci-lint fmt --diff {staged_files}
+    - name: go-lint
+      glob: "*.go"
+      # 只报这次改动的行引入的问题
+      run: golangci-lint run --new-from-rev=HEAD ./...
+    - name: web-lint
+      root: web/
+      glob: "*.{ts,tsx}"
+      run: pnpm exec eslint --max-warnings=0 --no-warn-ignored {staged_files}
+    - name: web-format
+      root: web/
+      glob: "*.{ts,tsx,js,css,json,html}"
+      run: pnpm exec prettier --check --ignore-unknown {staged_files}
+    - name: python
+      glob: "*.py"
+      run: ruff check {staged_files} && ruff format --check {staged_files}
+    - name: secrets
+      run: gitleaks git --pre-commit --staged --redact --no-banner
+
+commit-msg:
+  jobs:
+    - name: message
+      run: sh scripts/commit-msg.sh {1}

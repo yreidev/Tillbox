@@ -1,0 +1,172 @@
+{
+    "md5_key": "JibsFLkeuluG7AFLnK3DDPYa1m0WRYvT",
+    "md5": [
+        {
+            "title": "V1 下单",
+            "params": {
+                "pid": "1001",
+                "type": "alipay",
+                "out_trade_no": "20261015123456",
+                "notify_url": "https://shop.example.com/notify",
+                "return_url": "https://shop.example.com/return",
+                "name": "VIP 会员",
+                "money": "10.00",
+                "sign_type": "MD5"
+            },
+            "content": "money=10.00&name=VIP 会员&notify_url=https://shop.example.com/notify&out_trade_no=20261015123456&pid=1001&return_url=https://shop.example.com/return&type=alipay",
+            "sign": "5b8aa0b6b48dff32fad24e495c42e43c",
+            "server_verify": true,
+            "sdk_v1_sign": "5b8aa0b6b48dff32fad24e495c42e43c"
+        },
+        {
+            "title": "空值、0 和空白",
+            "params": {
+                "pid": "1001",
+                "param": "",
+                "cid": "0",
+                "device": " ",
+                "clientip": "\t",
+                "money": "0.01",
+                "name": "x"
+            },
+            "content": "cid=0&money=0.01&name=x&pid=1001",
+            "sign": "1a06d7e91c93b687dda9c292feb7858c",
+            "server_verify": true,
+            "sdk_v1_sign": "3e0cba25e9ecedf14a1b505441228233"
+        },
+        {
+            "title": "特殊字符原样拼接",
+            "params": {
+                "pid": "1001",
+                "name": "a&b=c+d%20e f",
+                "param": "{\"uid\":1,\"note\":\"中文\"}",
+                "notify_url": "https://a.example.com/n?x=1&y=2"
+            },
+            "content": "name=a&b=c+d%20e f&notify_url=https://a.example.com/n?x=1&y=2&param={\"uid\":1,\"note\":\"中文\"}&pid=1001",
+            "sign": "023de8ff7e97e30faf76bc706324eeef",
+            "server_verify": true,
+            "sdk_v1_sign": "023de8ff7e97e30faf76bc706324eeef"
+        },
+        {
+            "title": "键名按字节序",
+            "params": {
+                "B": "1",
+                "a": "2",
+                "_x": "3",
+                "a_b": "4",
+                "ab": "5",
+                "Z": "6",
+                "sign": "old",
+                "sign_type": "MD5"
+            },
+            "content": "B=1&Z=6&_x=3&a=2&a_b=4&ab=5",
+            "sign": "7ee5acc334705e265292f7475f13e1d2",
+            "server_verify": true,
+            "sdk_v1_sign": "7ee5acc334705e265292f7475f13e1d2"
+        },
+        {
+            "title": "通知参数",
+            "params": {
+                "pid": "1001",
+                "trade_no": "2026101509073391927",
+                "out_trade_no": "T1792026453",
+                "type": "alipay",
+                "name": "测试商品",
+                "money": "10.00",
+                "trade_status": "TRADE_SUCCESS"
+            },
+            "content": "money=10.00&name=测试商品&out_trade_no=T1792026453&pid=1001&trade_no=2026101509073391927&trade_status=TRADE_SUCCESS&type=alipay",
+            "sign": "ddcc429cc59116397e5fe5d6acd7efc2",
+            "server_verify": true,
+            "sdk_v1_sign": "ddcc429cc59116397e5fe5d6acd7efc2"
+        },
+        {
+            "title": "多字节和表情",
+            "params": {
+                "pid": "1001",
+                "name": "充值💰 100 点（含税）",
+                "money": "100"
+            },
+            "content": "money=100&name=充值💰 100 点（含税）&pid=1001",
+            "sign": "887fea9603bf4c319ed58dba0cb892a2",
+            "server_verify": true,
+            "sdk_v1_sign": "887fea9603bf4c319ed58dba0cb892a2"
+        }
+    ],
+    "rsa": [
+        {
+            "title": "V2 下单",
+            "params": {
+                "pid": "1001",
+                "type": "alipay",
+                "out_trade_no": "V2-0001",
+                "notify_url": "https://shop.example.com/notify",
+                "return_url": "https://shop.example.com/return",
+                "name": "月卡",
+                "money": "29.90",
+                "clientip": "203.0.113.7",
+                "timestamp": "1792026453",
+                "sign_type": "RSA"
+            },
+            "content": "clientip=203.0.113.7&money=29.90&name=月卡&notify_url=https://shop.example.com/notify&out_trade_no=V2-0001&pid=1001&return_url=https://shop.example.com/return&timestamp=1792026453&type=alipay",
+            "sign": "TtWGvzkG3Nq4NmIgzwibHmJgx3aKXvb8/wv8thcTYXH0VtDjDXtOdfc6vXyLQsq1DAx8jz4KYIbjvU+Ncws/xrjnNM5qX3VqIOQS4OZiDEJtTq2GOnHSMcf4Yi4QahXjC/tl4XHlFpKnlwMp+athXLt5mfHj7ZfjlnMkLNpC/5OIBGt7goCmfhkpSkm5RR/L593OKcURToFqaUMNTo6No4mxaqJ8NsgGq2iQIUIPa/H+Vy2fnCXLSPl4A1FbcHz3pvmUaAx6PK+yIS2grG/Drq/krNDl2I7wsDNFdF0v5sfy+jtsRdep6alcJzXLs66UiMwUvq832vdCZpqyQb7krg==",
+            "server_verify": true,
+            "sdk_v2_content": "clientip=203.0.113.7&money=29.90&name=月卡&notify_url=https://shop.example.com/notify&out_trade_no=V2-0001&pid=1001&return_url=https://shop.example.com/return&timestamp=1792026453&type=alipay",
+            "sdk_v2_sign": "TtWGvzkG3Nq4NmIgzwibHmJgx3aKXvb8/wv8thcTYXH0VtDjDXtOdfc6vXyLQsq1DAx8jz4KYIbjvU+Ncws/xrjnNM5qX3VqIOQS4OZiDEJtTq2GOnHSMcf4Yi4QahXjC/tl4XHlFpKnlwMp+athXLt5mfHj7ZfjlnMkLNpC/5OIBGt7goCmfhkpSkm5RR/L593OKcURToFqaUMNTo6No4mxaqJ8NsgGq2iQIUIPa/H+Vy2fnCXLSPl4A1FbcHz3pvmUaAx6PK+yIS2grG/Drq/krNDl2I7wsDNFdF0v5sfy+jtsRdep6alcJzXLs66UiMwUvq832vdCZpqyQb7krg=="
+        },
+        {
+            "title": "V2 通知",
+            "params": {
+                "pid": "1001",
+                "trade_no": "2026101509073391927",
+                "out_trade_no": "V2-0001",
+                "type": "alipay",
+                "name": "月卡",
+                "money": "29.90",
+                "trade_status": "TRADE_SUCCESS",
+                "api_trade_no": "2026101522001400000000000001",
+                "buyer": "张*(zha***@example.com)",
+                "param": "0",
+                "timestamp": "1792026500",
+                "sign_type": "RSA"
+            },
+            "content": "api_trade_no=2026101522001400000000000001&buyer=张*(zha***@example.com)&money=29.90&name=月卡&out_trade_no=V2-0001&param=0&pid=1001&timestamp=1792026500&trade_no=2026101509073391927&trade_status=TRADE_SUCCESS&type=alipay",
+            "sign": "SAJb2jl19xanr19OsdK4d6Yot86gP1PSrrmpRbR8XdJUrHcMVcwpTY+updJcbmicANbztq0JIjdC/73V+5Mt06KaXdm9vde4rcl8X9FREBzhvOBlDOSOA/VuBHTn1VX9EANQkqYHxsoLm/4dfcTqNxV/6Yve8VNSDJmMCzZwK2uvRy4H2tRhqVAhbCNcC9oFppuHQObAPIv0cvoPmTReBW1YAuqNqICRvIiVvBTt/8lXXKld+26mOLxaZyf7YhNElzn/XnBLcOZXnsGDoa/f33JzfbLmo4SbwzHbDe3YjrMmlY2biXOaK2rda/KgfW2t4pDzId5vIIq1HspSdlOiDQ==",
+            "server_verify": true,
+            "sdk_v2_content": "api_trade_no=2026101522001400000000000001&buyer=张*(zha***@example.com)&money=29.90&name=月卡&out_trade_no=V2-0001&param=0&pid=1001&timestamp=1792026500&trade_no=2026101509073391927&trade_status=TRADE_SUCCESS&type=alipay",
+            "sdk_v2_sign": "SAJb2jl19xanr19OsdK4d6Yot86gP1PSrrmpRbR8XdJUrHcMVcwpTY+updJcbmicANbztq0JIjdC/73V+5Mt06KaXdm9vde4rcl8X9FREBzhvOBlDOSOA/VuBHTn1VX9EANQkqYHxsoLm/4dfcTqNxV/6Yve8VNSDJmMCzZwK2uvRy4H2tRhqVAhbCNcC9oFppuHQObAPIv0cvoPmTReBW1YAuqNqICRvIiVvBTt/8lXXKld+26mOLxaZyf7YhNElzn/XnBLcOZXnsGDoa/f33JzfbLmo4SbwzHbDe3YjrMmlY2biXOaK2rda/KgfW2t4pDzId5vIIq1HspSdlOiDQ=="
+        },
+        {
+            "title": "V2 空值",
+            "params": {
+                "pid": "1001",
+                "trade_no": "",
+                "out_trade_no": "x y",
+                "device": " ",
+                "timestamp": "1792026453",
+                "sign_type": "RSA"
+            },
+            "content": "out_trade_no=x y&pid=1001&timestamp=1792026453",
+            "sign": "TBd/Ct8usq1fuY/lDMjDiAxG1bI5I7R0xSdDvXFdLO30UBrYtT+JRpnup5C1o3T9OD37vgHOiHIeyghIBX+iCW6tWot8ohgoEKja0kUMt4v/dm1nmA0K1xON2CEErFblONVpniSSrO2FT2BYulD6u3/EBiB2Vqsk1yBiiv2W3UQb4Zgzd2/m94XXmVzaK1LI4GEuOaEvXDset1/l8hqBMc+8o081ipQa4rbZhuL7Z2Xmio40QAFYrSR7MVKygBw0ila+OIm/UcdoXjoT2t9bdekASMto0w3ZKFxx/mKJ7pqlwUBNuHZbM1UA//Ml5XQPB4qUduSgcKBvElm+XFH6TA==",
+            "server_verify": true,
+            "sdk_v2_content": "out_trade_no=x y&pid=1001&timestamp=1792026453",
+            "sdk_v2_sign": "TBd/Ct8usq1fuY/lDMjDiAxG1bI5I7R0xSdDvXFdLO30UBrYtT+JRpnup5C1o3T9OD37vgHOiHIeyghIBX+iCW6tWot8ohgoEKja0kUMt4v/dm1nmA0K1xON2CEErFblONVpniSSrO2FT2BYulD6u3/EBiB2Vqsk1yBiiv2W3UQb4Zgzd2/m94XXmVzaK1LI4GEuOaEvXDset1/l8hqBMc+8o081ipQa4rbZhuL7Z2Xmio40QAFYrSR7MVKygBw0ila+OIm/UcdoXjoT2t9bdekASMto0w3ZKFxx/mKJ7pqlwUBNuHZbM1UA//Ml5XQPB4qUduSgcKBvElm+XFH6TA=="
+        }
+    ],
+    "values": [
+        {
+            "title": "查单响应",
+            "json": "{\"code\":0,\"trade_no\":\"2026101509073391927\",\"out_trade_no\":\"V2-0001\",\"type\":\"alipay\",\"pid\":1001,\"addtime\":\"2026-10-15 09:07:33\",\"name\":\"月卡\",\"money\":\"29.90\",\"status\":1,\"timestamp\":\"1792026453\",\"sign_type\":\"RSA\"}",
+            "content": "addtime=2026-10-15 09:07:33&code=0&money=29.90&name=月卡&out_trade_no=V2-0001&pid=1001&status=1&timestamp=1792026453&trade_no=2026101509073391927&type=alipay",
+            "sign": "eNJoFdBmfl956bzfkwrrJmwSp76Fp/OmEdU+ALVB82CuucKlbDoIXYlzydPA7LbMyoz57OoBgPcjpPMBE9B/pQ4Y+z559P01HiD+VK3dz9DWABeryINfCKT3YQZbPm71fn+b1t2bpAa4oWAORW5rdjBjNrUDsufMR72n1Up4fIu9bvIB0T4Mv2g8xO9BkRnT/A+/YuP6don2tT/QDKM36CgVYH6CGaCShrJOCgPfrcg5LeJVKJi4bLwSzkBdHl+YJfvPmKeXFEkYhhU4eQvWEnF3zmdUR31+JPez67N4skLGMc8WSdwOasurq7CUfD+mu42V3KtHz1KWLm3VtVIK5A=="
+        },
+        {
+            "title": "带空值和数组",
+            "json": "{\"code\":0,\"msg\":\"\",\"list\":[1,2],\"obj\":{\"a\":1},\"none\":null,\"zero\":0,\"neg\":-1,\"timestamp\":\"1792026453\"}",
+            "content": "code=0&neg=-1&timestamp=1792026453&zero=0",
+            "sign": "LH0kwwntl5X3pgFUDIFBoIuQLY1VcNjhEmJ07TQFNYKzyMy/KyFdIj/T/qWpwg+CA3V2jlUXmz9Jq4TqwSwFq1ONl3YdHcEAekExjNR0vDkbcxt+SjwtXThJ/U8OYQl9MiaZrGn6Nk5PGHWuCwGYMSq9guV/+Qv5xkNhxnQMY9o3NE1JhHP+FSspWD/Bw9bKzaOpuBE+Uj553oXwQG5H4hGU21Hr8Vegv4ppJ0je/FEAtZKjPFk1LIxCQLUxPNf7e+7i+0+5Mp6wqaGqbmGOT4b1x2E/Uu0gjpaZqqrIaF7jvCRsAW2OSZE7wyI7YK5dpOUts0B+VnS/zU/4WRL2NA=="
+        }
+    ],
+    "rsa_private_key": "MIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQCqSWfqZ9cFG2cGg0uW3zbFu1D5QOvl16iG4a8NNSNSzdFKQCI13mvy7Ph64SkQwjNNN5ZvZifKERPdk73ZPANMfHIpDDU81TSGyX1YaoaHCtS1VzsNADbOa8lAcsfiPqoKAsDU+8spFGBSH+63vrwTWBcHjm6G6FVKZza64axM7Pd3b+v12+mudxIrwn3vVWSiTLl3p/OJtRVuTfTQXAT0Py7DJsW3G0lAHcCJTPROnOo2clBLUPBuW3PBMmwOotQwu4D4HLgwx5y3alDcZ6oCn1T0+oiys5XnVe5718RikBg208jbWwSwOvke6xsiKLLKjCocgY0/2gGuRbV3DgPnAgMBAAECggEARV3Go2FuYQmzE5+bRJej37M4vng4P/X0FBHN9aLeQ0ZNCaKLbQcwURI//ApJaKa7MCrDMJjb/3+qaHnc/adpLpiJBniPHTs6fOeKFGC8cTkzwbUJfHfIW5jjr8mx69McABz0AS6aqR7AR+PzIc1kHrslEnJuSq1MxRS7YjA4uFKrNsfpaV7wno4hpfK5jX0H/FQ1GxjGNwYnLewevE4pVog4rg9KRFu7wNpqq79+/Ng++e7czj0k/OEkhNpZiBNsosLvC95sbeJjkC2ERRGX19mo30uw4GiEX8nSqu9bXj4+ro6pvImVqTzcz8eCVkx0CYmxT4RehydfE8wC+8z3GQKBgQDRzCVow9Y2jwblupvHFqDH6gmCvp7mhWDmCc51LGUOeSHIHbfC7I/HvIrMJS6ta3Pbet18OQarhgkJ+dmCtn7dv45dPANSXBU98zcqjMqYlQQjV1M9fKzAhfdtGTVDl8TfQDsi+cJ0SzeJrKST43ZiW7Agms0JrC6qqe34cJkhDwKBgQDPyb7RpHxssIzboyG5F9hj16Q/i/s3IBYVQtY6LTArySvDfxdaLAjGOGNB49dKQTR1/juvKol9M3s8VwjCu9rdzPlIW6t2qDWF7aiDZKsJI4Y3E81j6/DlNZUo7m6Gvcjvqi5M1VU+1bEiizp/WF540rmLxSZJE8c0QRXKTuO/qQKBgQC4FDZysPpgzqgPo+eRDOKv5kLIDDdiLn9x+ALFvtlAlLo2WxTknCof5+ek7a8CDLkQR8LUfzjCAQ4nSak2zqeMK8pfNgv4FMGypJev5u7QaFfEJpfr6FuvZRxPBoI8t4rPFA2PR7P91A176BZTiI5UCP0F7q2fIgukRQt/JFTHswKBgQCmWin+xOUoTyA2JyA0gzammFnS1krFE1capmvEH7FVHLWAyhr0AhT0POiaM8KEnDdXz7YQwslYBwM+h59n5+WNdTCOEXXwhTJ0ipRCvTGBG4O0TJI+0QIHPyKvplOuY/qehWyT7qdUqtgpg7XNhf38VRhfIfNIxiDRYNoFIauMIQKBgQCiDv4UmyYeYvumhFo7W2Vd/HB4in6gro0wBOWMmw4ZZU2IH5lZ5zSm8X0+4tQeV+HErZljBqW5MhiFgRFQkjt1RVHQpo/2vD7ctsxrnx92YSKHUYdYqIShBf2xaWYZ7I1XEYHMZFMx5XbiD70cILgX+lux4sK3Bkin/zxCBUtZbg==",
+    "rsa_public_key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqkln6mfXBRtnBoNLlt82xbtQ+UDr5deohuGvDTUjUs3RSkAiNd5r8uz4euEpEMIzTTeWb2YnyhET3ZO92TwDTHxyKQw1PNU0hsl9WGqGhwrUtVc7DQA2zmvJQHLH4j6qCgLA1PvLKRRgUh/ut768E1gXB45uhuhVSmc2uuGsTOz3d2/r9dvprncSK8J971Vkoky5d6fzibUVbk300FwE9D8uwybFtxtJQB3AiUz0TpzqNnJQS1DwbltzwTJsDqLUMLuA+By4MMect2pQ3GeqAp9U9PqIsrOV51Xue9fEYpAYNtPI21sEsDr5HusbIiiyyowqHIGNP9oBrkW1dw4D5wIDAQAB"
+}
