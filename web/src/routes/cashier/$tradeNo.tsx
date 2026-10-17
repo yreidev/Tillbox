@@ -113,6 +113,8 @@ const confirmWindow = 3 * 60_000
 
 const isMobile =
   typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|Mobile|HarmonyOS/i.test(navigator.userAgent)
+// 在支付宝 App 里打开的收银台：付款人用支付宝扫了商户页面上的二维码进来。
+const inAlipay = typeof navigator !== 'undefined' && /AlipayClient/i.test(navigator.userAgent)
 
 function Cashier() {
   const { tradeNo } = Route.useParams()
@@ -463,9 +465,11 @@ function Pay({
   const differs = order.pay_amount !== order.amount
   const upstream = !!order.pay_types
   const alipayQR = /^https:\/\/qr\.alipay\.com\//i.test(guide.qrcode)
-  // 手机上扫不了自己屏幕上的码：二维码内容是网址时给个直接打开的按钮。
+  // 手机上扫不了自己屏幕上的码：二维码内容是网址时给个直接打开的按钮，作为主操作。
   const openQR = isMobile && (alipayQR || (upstream && /^https?:\/\//i.test(guide.qrcode))) ? guide.qrcode : ''
   const app = appName(guide.app)
+  // 已经在支付宝里了，再让人扫码就绕回去了：不显示二维码，只给付款按钮。
+  const inApp = !!openQR && inAlipay && app === '支付宝'
   const goButton = !!(guide.pay_url || guide.submit)
 
   useEffect(() => {
@@ -518,7 +522,7 @@ function Pay({
           {differs && <>（订单金额 {order.amount} 元，尾数用来识别你的订单）</>}，否则无法自动到账。
         </Notice>
       )}
-      {png && (
+      {png && !inApp && (
         <figure className="flex flex-col items-center gap-3">
           <div className="rounded-2xl border border-separator bg-white p-2 shadow-surface">
             <img src={png} alt="付款二维码" width={220} height={220} className="block size-[220px]" />
@@ -535,15 +539,27 @@ function Pay({
           </figcaption>
         </figure>
       )}
+      {inApp && guide.payee_name && (
+        <p className="text-center text-sm text-muted">
+          收款方：<span className="font-medium text-foreground">{guide.payee_name}</span>
+        </p>
+      )}
       {(openQR || (png && isMobile)) && (
         <div className="flex flex-col gap-2">
           {openQR && (
-            <Button fullWidth size="lg" variant="secondary" onPress={() => openURL(openQR, false)}>
-              {alipayQR ? '打开支付宝付款' : '在本机打开付款页'}
+            <Button fullWidth size="lg" onPress={() => openURL(openQR, false)}>
+              {inApp ? '立即付款' : alipayQR ? '打开支付宝付款' : '在本机打开付款页'}
             </Button>
           )}
-          {png && isMobile && (
-            <p className="text-center text-xs text-muted">也可以长按二维码保存到相册，在{app}“扫一扫”里从相册选择。</p>
+          {inApp ? (
+            <p className="text-center text-xs text-muted">付款完成后回到这个页面，等待到账确认。</p>
+          ) : (
+            png &&
+            isMobile && (
+              <p className="text-center text-xs text-muted">
+                也可以长按二维码保存到相册，在{app}“扫一扫”里从相册选择。
+              </p>
+            )
           )}
         </div>
       )}
@@ -569,7 +585,13 @@ function Pay({
         {claimed ? (
           <Waiting text="正在确认到账，通常 10–30 秒，请不要关闭页面" />
         ) : (
-          <Button fullWidth size="lg" variant={goButton ? 'secondary' : 'primary'} onPress={onPaid} isPending={busy}>
+          <Button
+            fullWidth
+            size="lg"
+            variant={goButton || openQR ? 'secondary' : 'primary'}
+            onPress={onPaid}
+            isPending={busy}
+          >
             我已付款
           </Button>
         )}
