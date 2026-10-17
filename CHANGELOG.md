@@ -26,6 +26,7 @@
 - 首次生成主密钥时先确认写入磁盘再用它加密，避免断电后库里的密钥解不开。
 - 开发：加入 golangci-lint、ESLint、Prettier、ruff 规范检查和提交钩子，前端纯逻辑加 Vitest 单元测试；命令和规则见 `docs/development.md`。
 - 发版：`make ci` 在本机跑和 CI 相同的全部检查（含 race 检测和 PostgreSQL 测试），`make release VERSION=x.y.z` 检查通过后改版本号、提交并打签名标签；步骤见 `docs/release.md`。CI 升级到各 Action 的最新主版本，并加上规范和漏洞检查。
+- Go 工具链升级到 1.27.2，修复标准库 `net/http`（含 HTTP/2）、`net/textproto`、`crypto/tls` 的 10 个已知漏洞（GO-2026-6603 至 GO-2026-6617），其中有 HTTP/2 服务端崩溃和内存耗尽。用旧工具链构建的二进制和镜像都受影响，升级后要重新部署。
 
 ## 0.2.3 — 2026-10-16
 
