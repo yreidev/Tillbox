@@ -46,8 +46,11 @@ func NewAuth(db *bun.DB) *Auth {
 	return &Auth{db: db, fails: map[string][]time.Time{}}
 }
 
+// PasswordCost 是管理员密码的 bcrypt 强度，可以在测试里调低：开 race 检测时，强度 12 算一次要好几秒。
+var PasswordCost = 12
+
 var dummyHash = sync.OnceValue(func() string {
-	h, _ := bcrypt.GenerateFromPassword([]byte(randomString(16)), 12)
+	h, _ := bcrypt.GenerateFromPassword([]byte(randomString(16)), PasswordCost)
 	return string(h)
 })
 
@@ -198,7 +201,7 @@ func checkPassword(p string) error {
 }
 
 func setPassword(ctx context.Context, db bun.IDB, adminID int64, password string) error {
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), PasswordCost)
 	if err != nil {
 		return err
 	}
@@ -215,7 +218,7 @@ func EnsureAdmin(ctx context.Context, db *bun.DB) (string, error) {
 		return "", err
 	}
 	password := randomString(12)
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), PasswordCost)
 	if err != nil {
 		return "", err
 	}

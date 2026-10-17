@@ -27,7 +27,9 @@ import (
 	"time"
 
 	"github.com/uptrace/bun"
+	"golang.org/x/crypto/bcrypt"
 
+	"tillbox/internal/admin"
 	"tillbox/internal/app"
 	"tillbox/internal/channel/fake"
 	"tillbox/internal/config"
@@ -37,6 +39,9 @@ import (
 	"tillbox/internal/settings"
 	"tillbox/internal/store"
 )
+
+// 每个测试建环境（生成管理员密码）和登录都要算一次 bcrypt，用最低强度，不然开 race 检测时测试慢几十倍。
+func init() { admin.PasswordCost = bcrypt.MinCost }
 
 // Env 是一套跑起来的服务。
 type Env struct {
