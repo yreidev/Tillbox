@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
@@ -224,59 +223,71 @@ func duration(d time.Duration) string {
 	return fmt.Sprintf("%d 天", int(d/(24*time.Hour)))
 }
 
-// message 把这次的变化拼成一条纯文本消息：新的和变多的在前，仍未恢复的其次，恢复的最后。
-func (s *Service) message(ctx context.Context, events []event, now time.Time) string {
-	lines := []string{fmt.Sprintf("[%s 告警] %s", s.siteName(ctx), now.In(epay.CST).Format("01-02 15:04"))}
-	icon := func(a *store.Alert) string {
-		if a.Level == store.AlertCritical {
-			return "🔴 "
-		}
-		return "🟠 "
-	}
-	withDetail := func(line string, a *store.Alert) {
-		lines = append(lines, line)
-		if a.Detail != "" {
-			lines = append(lines, "    "+a.Detail)
-		}
-	}
-	for _, e := range events {
-		switch e.kind {
-		case "open":
-			withDetail(icon(e.alert)+e.alert.Title, e.alert)
-		case "more":
-			withDetail(icon(e.alert)+e.alert.Title+"（有新增）", e.alert)
-		}
-	}
-	for _, e := range events {
-		if e.kind == "remind" {
-			lines = append(lines, fmt.Sprintf("⏰ 已持续 %s：%s", duration(now.Sub(store.Time(e.alert.StartedAt))), e.alert.Title))
-		}
-	}
-	for _, e := range events {
-		if e.kind == "resolved" {
-			lines = append(lines, "🟢 已恢复："+e.alert.Title)
-		}
-	}
-	if s.PublicURL != "" {
-		lines = append(lines, "", "监控页："+s.PublicURL+"/admin/monitor")
-	}
-	return strings.Join(lines, "\n")
+// message 把这次告警的变化拼成一条消息。
+func (s *Service) message(ctx context.Context, events []event, now time.Time) Message {
+	return render(alertCard(events, now), s.siteName(ctx), now, false, s.alertLink(events))
 }
 
-// Test 发一条测试消息。
-func (s *Service) Test(ctx context.Context) error {
-	err := s.Telegram.Send(ctx, fmt.Sprintf("[%s] 测试消息：告警和收款通知会发到这里。", s.siteName(ctx)))
-	if err == nil {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		state, serr := s.State(ctx)
-		if serr != nil {
-			return serr
-		}
-		state.SentAt = store.Ms(s.Now())
-		return s.Settings.SaveRaw(ctx, stateKey, state)
+// TestKinds 是可以发的测试消息，按菜单里的顺序。
+var TestKinds = []string{"alert_open", "alert_resolved", "paid", "claim"}
+
+// ErrTestKind 是不认识的测试消息类型。
+var ErrTestKind = errors.New("不认识的测试消息类型")
+
+// sample 用示例数据拼一条测试消息，排版和真实消息一样，标题标“【测试】”。不读写告警和待发队列。
+func (s *Service) sample(ctx context.Context, kind string, now time.Time) (Message, error) {
+	site := s.siteName(ctx)
+	tradeNo := now.In(epay.CST).Format("20060102150405") + "12345"
+	alert := &store.Alert{
+		Level: store.AlertCritical, Title: "示例渠道向上游查单连续失败 3 次", Detail: "上游返回：系统繁忙，请稍后再试",
+		Link: "/admin/channels", StartedAt: store.Ms(now),
 	}
-	return err
+	switch kind {
+	case "alert_open":
+		events := []event{{alert, "open"}}
+		return render(alertCard(events, now), site, now, true, s.alertLink(events)), nil
+	case "alert_resolved":
+		alert.StartedAt = store.Ms(now.Add(-35 * time.Minute))
+		events := []event{{alert, "resolved"}}
+		return render(alertCard(events, now), site, now, true, s.alertLink(events)), nil
+	case "paid":
+		items := []paidItem{{Paid: 1200, Amount: 1200, Merchant: "示例商户", Channel: "支付宝经营码", Name: "示例商品", TradeNo: tradeNo}}
+		return render(paidCard(items), site, now, true, s.button("查看订单", "/admin/orders")), nil
+	case "claim":
+		items := []claimItem{{Kind: "not_received", Amount: 1200, TradeNo: tradeNo}}
+		return render(claimCard(items), site, now, true, s.button("处理申诉", "/admin/assistance")), nil
+	}
+	return Message{}, ErrTestKind
+}
+
+// Test 发测试消息。kind 是 TestKinds 里的一种，"all" 表示每种各发一条；有一条发不出去就停下。
+func (s *Service) Test(ctx context.Context, kind string) error {
+	kinds := []string{kind}
+	if kind == "all" {
+		kinds = TestKinds
+	}
+	now := s.Now()
+	msgs := make([]Message, 0, len(kinds))
+	for _, k := range kinds {
+		m, err := s.sample(ctx, k, now)
+		if err != nil {
+			return err
+		}
+		msgs = append(msgs, m)
+	}
+	for _, m := range msgs {
+		if err := s.Telegram.Send(ctx, m); err != nil {
+			return err
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state, err := s.State(ctx)
+	if err != nil {
+		return err
+	}
+	state.SentAt = store.Ms(s.Now())
+	return s.Settings.SaveRaw(ctx, stateKey, state)
 }
 
 // OpenCount 返回进行中的告警数（侧栏角标用）。

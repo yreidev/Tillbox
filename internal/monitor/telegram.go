@@ -26,7 +26,7 @@ const (
 	BindTTL     = 10 * time.Minute
 	pollTimeout = 30 * time.Second
 	sendTimeout = 15 * time.Second
-	// maxText 留在 Telegram 单条消息 4096 字的上限以内。
+	// maxText 是拼消息时的长度上限（按含标签的 HTML 算），留在 Telegram 单条消息 4096 字的上限以内。
 	maxText = 3500
 )
 
@@ -291,7 +291,7 @@ func (t *Telegram) Unbind(ctx context.Context, id int64) error {
 }
 
 // Send 发给全部绑定的会话，每个会话的结果记在库里。至少送达一个就算成功。
-func (t *Telegram) Send(ctx context.Context, text string) error {
+func (t *Telegram) Send(ctx context.Context, m Message) error {
 	cfg, err := t.Settings.Telegram(ctx)
 	if err != nil {
 		return err
@@ -306,8 +306,11 @@ func (t *Telegram) Send(ctx context.Context, text string) error {
 	if len(chats) == 0 {
 		return ErrNoChats
 	}
-	if r := []rune(text); len(r) > maxText {
-		text = string(r[:maxText]) + "\n……"
+	params := bot.SendMessageParams{
+		Text: m.Text, ParseMode: models.ParseModeHTML, LinkPreviewOptions: &models.LinkPreviewOptions{IsDisabled: bot.True()},
+	}
+	if m.Button != nil {
+		params.ReplyMarkup = &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{{Text: m.Button.Text, URL: m.Button.URL}}}}
 	}
 	b, err := t.bot(cfg.Token)
 	if err != nil {
@@ -318,9 +321,9 @@ func (t *Telegram) Send(ctx context.Context, text string) error {
 	for i := range chats {
 		c := &chats[i]
 		sctx, cancel := context.WithTimeout(ctx, sendTimeout)
-		_, err := b.SendMessage(sctx, &bot.SendMessageParams{
-			ChatID: c.ChatID, Text: text, LinkPreviewOptions: &models.LinkPreviewOptions{IsDisabled: bot.True()},
-		})
+		p := params
+		p.ChatID = c.ChatID
+		_, err := b.SendMessage(sctx, &p)
 		cancel()
 		now := store.Ms(t.Now())
 		if err != nil {

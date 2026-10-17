@@ -5,12 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/uptrace/bun"
 
-	"tillbox/internal/epay"
 	"tillbox/internal/store"
 )
 
@@ -26,7 +24,7 @@ const (
 	KeepEvents = 7 * 24 * time.Hour
 )
 
-// claimKinds 和收银台自助页的申诉类型一致。
+// claimKinds 和付款人自助页的申诉类型一致。
 var claimKinds = map[string]string{
 	"not_received": "已付款未到账",
 	"wrong_amount": "金额付错",
@@ -101,12 +99,12 @@ func (s *Service) Deliver(ctx context.Context) error {
 		if len(group) == 0 {
 			continue
 		}
-		var text string
+		var msg Message
 		var included []int64
 		if kind == store.AdminEventPaid {
-			text, included, err = s.paidMessage(ctx, group, now)
+			msg, included, err = s.paidMessage(ctx, group, now)
 		} else {
-			text, included, err = s.claimMessage(ctx, group, now)
+			msg, included, err = s.claimMessage(ctx, group, now)
 		}
 		if err != nil {
 			return err
@@ -115,7 +113,7 @@ func (s *Service) Deliver(ctx context.Context) error {
 		if len(included) == 0 {
 			continue
 		}
-		err := s.Telegram.Send(ctx, text)
+		err := s.Telegram.Send(ctx, msg)
 		switch {
 		case errors.Is(err, ErrNoChats):
 			skipped = append(skipped, included...)
@@ -173,23 +171,23 @@ func eventOf(evs []store.AdminEvent) (refs []int64, byRef map[int64]int64) {
 
 // paidMessage 把到账的订单拼成一条消息：实付金额、商户、渠道、商品名、订单号。不带付款人信息。
 // 已经不是“已支付”的订单（例如管理员撤销了关联）不发。
-func (s *Service) paidMessage(ctx context.Context, evs []store.AdminEvent, now time.Time) (string, []int64, error) {
+func (s *Service) paidMessage(ctx context.Context, evs []store.AdminEvent, now time.Time) (Message, []int64, error) {
 	refs, byRef := eventOf(evs)
 	var orders []store.Order
 	if err := s.DB.NewSelect().Model(&orders).Where("id IN (?)", bun.List(refs)).Where("status = ?", store.OrderPaid).
 		Order("paid_at ASC", "id ASC").Scan(ctx); err != nil {
-		return "", nil, err
+		return Message{}, nil, err
 	}
 	if len(orders) == 0 {
-		return "", nil, nil
+		return Message{}, nil, nil
 	}
 	var merchants []store.Merchant
 	if err := s.DB.NewSelect().Model(&merchants).Column("id", "name").Scan(ctx); err != nil {
-		return "", nil, err
+		return Message{}, nil, err
 	}
 	var channels []store.Channel
 	if err := s.DB.NewSelect().Model(&channels).Column("id", "name").Scan(ctx); err != nil {
-		return "", nil, err
+		return Message{}, nil, err
 	}
 	merchantName := make(map[int64]string, len(merchants))
 	for _, m := range merchants {
@@ -199,26 +197,10 @@ func (s *Service) paidMessage(ctx context.Context, evs []store.AdminEvent, now t
 	for _, c := range channels {
 		channelName[c.Key()] = c.Name
 	}
-	var total int64
 	included := make([]int64, 0, len(orders))
+	items := make([]paidItem, 0, len(orders))
 	for _, o := range orders {
-		total += o.PaidAmount
 		included = append(included, byRef[o.ID])
-	}
-	head := fmt.Sprintf("[%s 收款到账] %s", s.siteName(ctx), now.In(epay.CST).Format("01-02 15:04"))
-	if len(orders) > 1 {
-		head += fmt.Sprintf(" · %d 笔共 ¥%s", len(orders), epay.FormatCents(total))
-	}
-	lines := []string{head}
-	for i, o := range orders {
-		if i == maxListed {
-			lines = append(lines, fmt.Sprintf("……另有 %d 笔", len(orders)-maxListed))
-			break
-		}
-		amount := "¥" + epay.FormatCents(o.PaidAmount)
-		if o.PaidAmount != o.Amount {
-			amount += "（订单 ¥" + epay.FormatCents(o.Amount) + "）"
-		}
 		m := merchantName[o.MerchantID]
 		if m == "" {
 			m = fmt.Sprintf("商户 %d", o.MerchantID)
@@ -227,31 +209,24 @@ func (s *Service) paidMessage(ctx context.Context, evs []store.AdminEvent, now t
 		if c == "" {
 			c = o.Channel
 		}
-		line := "💰 " + strings.Join([]string{amount, m, c}, " · ")
-		if o.IsTest {
-			line += "（测试单）"
-		}
-		lines = append(lines, line, "    "+strings.TrimSpace(o.Name+" · 订单 "+o.TradeNo))
+		items = append(items, paidItem{Paid: o.PaidAmount, Amount: o.Amount, Merchant: m, Channel: c, Name: o.Name, TradeNo: o.TradeNo, Test: o.IsTest})
 	}
-	if s.PublicURL != "" {
-		link := s.PublicURL + "/admin/orders?state=paid"
-		if len(orders) == 1 {
-			link = s.PublicURL + "/admin/orders?q=" + orders[0].TradeNo
-		}
-		lines = append(lines, "", "订单页："+link)
+	link := s.button("查看已支付订单", "/admin/orders?state=paid")
+	if len(orders) == 1 {
+		link = s.button("查看订单", "/admin/orders?q="+orders[0].TradeNo)
 	}
-	return strings.Join(lines, "\n"), included, nil
+	return render(paidCard(items), s.siteName(ctx), now, false, link), included, nil
 }
 
 // claimMessage 把付款人提交的申诉拼成一条消息：类型、申报金额、订单号。付款人填的联系方式和说明不发，到后台看。
-func (s *Service) claimMessage(ctx context.Context, evs []store.AdminEvent, now time.Time) (string, []int64, error) {
+func (s *Service) claimMessage(ctx context.Context, evs []store.AdminEvent, now time.Time) (Message, []int64, error) {
 	refs, byRef := eventOf(evs)
 	var cases []store.AssistanceCase
 	if err := s.DB.NewSelect().Model(&cases).Where("id IN (?)", bun.List(refs)).Order("id ASC").Scan(ctx); err != nil {
-		return "", nil, err
+		return Message{}, nil, err
 	}
 	if len(cases) == 0 {
-		return "", nil, nil
+		return Message{}, nil, nil
 	}
 	var orderIDs []int64
 	for _, c := range cases {
@@ -263,38 +238,17 @@ func (s *Service) claimMessage(ctx context.Context, evs []store.AdminEvent, now 
 	if len(orderIDs) > 0 {
 		var orders []store.Order
 		if err := s.DB.NewSelect().Model(&orders).Column("id", "trade_no").Where("id IN (?)", bun.List(orderIDs)).Scan(ctx); err != nil {
-			return "", nil, err
+			return Message{}, nil, err
 		}
 		for _, o := range orders {
 			tradeNo[o.ID] = o.TradeNo
 		}
 	}
-	head := fmt.Sprintf("[%s 付款申诉] %s", s.siteName(ctx), now.In(epay.CST).Format("01-02 15:04"))
-	if len(cases) > 1 {
-		head += fmt.Sprintf(" · %d 个", len(cases))
-	}
 	included := make([]int64, 0, len(cases))
+	items := make([]claimItem, 0, len(cases))
 	for _, c := range cases {
 		included = append(included, byRef[c.ID])
+		items = append(items, claimItem{Kind: c.Kind, Amount: c.ClaimAmount, TradeNo: tradeNo[c.OrderID]})
 	}
-	lines := []string{head}
-	for i, c := range cases {
-		if i == maxListed {
-			lines = append(lines, fmt.Sprintf("……另有 %d 个", len(cases)-maxListed))
-			break
-		}
-		kind := claimKinds[c.Kind]
-		if kind == "" {
-			kind = c.Kind
-		}
-		order := "没关联到订单"
-		if no := tradeNo[c.OrderID]; no != "" {
-			order = "订单 " + no
-		}
-		lines = append(lines, "📨 "+strings.Join([]string{kind, "¥" + epay.FormatCents(c.ClaimAmount), order}, " · "))
-	}
-	if s.PublicURL != "" {
-		lines = append(lines, "", "申诉页："+s.PublicURL+"/admin/assistance")
-	}
-	return strings.Join(lines, "\n"), included, nil
+	return render(claimCard(items), s.siteName(ctx), now, false, s.button("处理申诉", "/admin/assistance")), included, nil
 }

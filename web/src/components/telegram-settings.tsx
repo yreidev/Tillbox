@@ -2,8 +2,21 @@
 // 结构和 internal/admin/telegram.go 一致。
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Form } from '@heroui/react'
-import { ArrowUpRightFromSquare, Eye, EyeSlash, LogoTelegram, PaperPlane, Plus } from '@gravity-ui/icons'
+import { Button, Description, Dropdown, Form, Label, Separator } from '@heroui/react'
+import {
+  ArrowUpRightFromSquare,
+  ChevronDown,
+  CircleCheck,
+  Comment,
+  CreditCard,
+  Eye,
+  EyeSlash,
+  Layers,
+  LogoTelegram,
+  PaperPlane,
+  Plus,
+  TriangleExclamation,
+} from '@gravity-ui/icons'
 import { encode } from 'uqr'
 import { api } from '../lib/api'
 import { relative } from '../lib/format'
@@ -72,6 +85,14 @@ interface Prefs {
 
 export const telegramKey = ['telegram']
 const base = '/web-api/admin/settings/telegram'
+
+/** 测试消息的种类，和 internal/monitor 的 TestKinds 一致；all 是每种各发一条 */
+const testKinds = [
+  { id: 'alert_open', label: '告警开始', description: '示例：上游查单连续失败', Icon: TriangleExclamation },
+  { id: 'alert_resolved', label: '告警恢复', description: '示例：同一条告警恢复了', Icon: CircleCheck },
+  { id: 'paid', label: '收款到账', description: '示例：一笔 ¥12.00 的订单到账', Icon: CreditCard },
+  { id: 'claim', label: '付款申诉', description: '示例：付款人申诉已付款未到账', Icon: Comment },
+]
 
 export function TelegramSettings() {
   const q = useQuery({
@@ -282,10 +303,14 @@ function ChatsPanel({ tg, now }: { tg: TelegramView; now: number }) {
     onError: toastError,
   })
   const test = useMutation({
-    mutationFn: () => api.post(`${base}/test`),
-    onSuccess: async () => {
+    mutationFn: (kind: string) => api.post(`${base}/test`, { kind }),
+    onSuccess: async (_, kind) => {
       await refresh()
-      toastOK('测试消息已发出，请到 Telegram 查看')
+      toastOK(
+        kind === 'all'
+          ? `${testKinds.length} 条测试消息已发出，请到 Telegram 查看`
+          : '测试消息已发出，请到 Telegram 查看',
+      )
     },
     onError: async (e) => {
       await refresh()
@@ -319,16 +344,39 @@ function ChatsPanel({ tg, now }: { tg: TelegramView; now: number }) {
       description={tg.state.sent_at ? `上次发出消息是 ${relative(tg.state.sent_at, now)}` : '还没发过消息'}
       extra={
         <>
-          <Button
-            size="sm"
-            variant="tertiary"
-            isDisabled={tg.chats.length === 0}
-            isPending={test.isPending}
-            onPress={() => test.mutate()}
-          >
-            <PaperPlane />
-            发测试消息
-          </Button>
+          <Dropdown>
+            <Button size="sm" variant="tertiary" isDisabled={tg.chats.length === 0} isPending={test.isPending}>
+              <PaperPlane />
+              发测试消息
+              <ChevronDown className="size-3.5" />
+            </Button>
+            {/* HeroUI 默认最宽 48svw，手机上说明会挤成两行 */}
+            <Dropdown.Popover placement="bottom end" className="w-64 max-w-[calc(100svw-2rem)]">
+              <Dropdown.Menu aria-label="发哪种测试消息" onAction={(k) => test.mutate(String(k))}>
+                {testKinds.map(({ id, label, description, Icon }) => (
+                  <Dropdown.Item key={id} id={id} textValue={label}>
+                    <div className="flex h-8 items-start justify-center pt-px">
+                      <Icon className="size-4 shrink-0 text-muted" />
+                    </div>
+                    <div className="flex flex-col">
+                      <Label>{label}</Label>
+                      <Description className="whitespace-normal">{description}</Description>
+                    </div>
+                  </Dropdown.Item>
+                ))}
+                <Separator />
+                <Dropdown.Item id="all" textValue="全部发一遍">
+                  <div className="flex h-8 items-start justify-center pt-px">
+                    <Layers className="size-4 shrink-0 text-muted" />
+                  </div>
+                  <div className="flex flex-col">
+                    <Label>全部发一遍</Label>
+                    <Description className="whitespace-normal">上面四种各发一条</Description>
+                  </div>
+                </Dropdown.Item>
+              </Dropdown.Menu>
+            </Dropdown.Popover>
+          </Dropdown>
           <Button size="sm" variant="secondary" isPending={bind.isPending} onPress={() => bind.mutate()}>
             <Plus />
             添加接收人

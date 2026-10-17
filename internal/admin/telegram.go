@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 
 	"tillbox/internal/monitor"
@@ -109,8 +110,18 @@ func (a *API) cancelBindTelegram(w http.ResponseWriter, _ *http.Request) error {
 	return nil
 }
 
+// testTelegram 用示例数据发测试消息：kind 是告警开始、告警恢复、收款到账、付款申诉之一，或 all（每种各一条）。
 func (a *API) testTelegram(w http.ResponseWriter, r *http.Request) error {
-	if err := a.Monitor.Test(r.Context()); err != nil {
+	var in struct {
+		Kind string `json:"kind"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	if in.Kind != "all" && !slices.Contains(monitor.TestKinds, in.Kind) {
+		return badRequest(monitor.ErrTestKind.Error())
+	}
+	if err := a.Monitor.Test(r.Context(), in.Kind); err != nil {
 		return badRequest("发送失败：" + err.Error())
 	}
 	ok(w, map[string]any{})

@@ -25,8 +25,10 @@ import (
 const token = "123456:test-token"
 
 type sent struct {
-	ChatID string
-	Text   string
+	ChatID    string
+	Text      string
+	ParseMode string
+	Markup    string // 消息下方按钮的 JSON
 }
 
 // fakeTelegram 是假的 Bot API：记下发出的消息，getUpdates 依次返回排好的批次，没有时挂起一会儿再返回空。
@@ -68,7 +70,7 @@ func (f *fakeTelegram) serve(w http.ResponseWriter, r *http.Request) {
 		f.mu.Unlock()
 		reply(w, 200, fmt.Sprintf(`{"ok":true,"result":{"id":%d,"is_bot":true,"first_name":"Tillbox","username":"tillbox_test_bot"}}`, id))
 	case "sendMessage":
-		f.sent = append(f.sent, sent{r.FormValue("chat_id"), r.FormValue("text")})
+		f.sent = append(f.sent, sent{r.FormValue("chat_id"), r.FormValue("text"), r.FormValue("parse_mode"), r.FormValue("reply_markup")})
 		fail := f.sendFail
 		f.mu.Unlock()
 		if fail {
@@ -205,10 +207,13 @@ func TestAlertLifecycle(t *testing.T) {
 	if len(got) != 2 || got[0].ChatID != "42" || got[1].ChatID != "43" {
 		t.Fatalf("每个绑定的会话各发一条：%+v", got)
 	}
-	for _, want := range []string{"[Tillbox 告警]", "🟠 1 个付款问题等人工处理", "监控页：https://pay.example.com/admin/monitor"} {
+	for _, want := range []string{"🟠 <b>1 个付款问题等人工处理</b>", "<blockquote>AI 核查后无法自动确认", "<i>Tillbox · "} {
 		if !strings.Contains(got[0].Text, want) {
 			t.Errorf("消息里应有 %q：\n%s", want, got[0].Text)
 		}
+	}
+	if got[0].ParseMode != "HTML" || !strings.Contains(got[0].Markup, `"text":"去处理"`) || !strings.Contains(got[0].Markup, `"url":"https://pay.example.com/admin/assistance"`) {
+		t.Errorf("用 HTML 格式，只有一条告警时按钮直接去处理：%+v", got[0])
 	}
 
 	// 没有变化：不再发。
@@ -231,7 +236,7 @@ func TestAlertLifecycle(t *testing.T) {
 	f.reset()
 	c.Add(time.Hour)
 	evaluate(t, e, m)
-	if got := f.messages(); len(got) != 2 || !strings.Contains(got[0].Text, "⏰ 已持续 1 小时：2 个付款问题等人工处理") {
+	if got := f.messages(); len(got) != 2 || !strings.Contains(got[0].Text, "⏰ <b>2 个付款问题等人工处理</b>") || !strings.Contains(got[0].Text, "已持续 1 小时，还没恢复") {
 		t.Fatalf("持续未恢复应提醒：%+v", got)
 	}
 
@@ -250,7 +255,7 @@ func TestAlertLifecycle(t *testing.T) {
 	if as := openAlerts(t, e, m); len(as) != 0 {
 		t.Fatalf("消失 2 分钟后应恢复：%+v", as)
 	}
-	if got := f.messages(); len(got) != 2 || !strings.Contains(got[0].Text, "🟢 已恢复：2 个付款问题等人工处理") {
+	if got := f.messages(); len(got) != 2 || !strings.Contains(got[0].Text, "🟢 <b>已恢复：2 个付款问题等人工处理</b>") || !strings.Contains(got[0].Markup, "/admin/monitor") {
 		t.Fatalf("恢复时应通知：%+v", got)
 	}
 	resolved, err := m.Resolved(e.Ctx, 10)
@@ -445,15 +450,18 @@ func TestBusinessMessages(t *testing.T) {
 		t.Fatalf("到账发一条：%+v", got)
 	}
 	text := got[0].Text
-	for _, want := range []string{"收款到账", "¥" + epay.FormatCents(o.PaidAmount), "测试商户", "账户充值", "订单 " + o.TradeNo, "/admin/orders?q=" + o.TradeNo} {
+	for _, want := range []string{"<b>收款到账 · ¥" + epay.FormatCents(o.PaidAmount), "商户　测试商户", "商品　账户充值", "订单　<code>" + o.TradeNo + "</code>"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("到账消息缺 %q：\n%s", want, text)
 		}
 	}
+	if !strings.Contains(got[0].Markup, `"text":"查看订单"`) || !strings.Contains(got[0].Markup, "/admin/orders?q="+o.TradeNo) {
+		t.Fatalf("到账消息的按钮打开这笔订单：%s", got[0].Markup)
+	}
 	if strings.Contains(text, "测试付款人") || strings.Contains(text, "test***") {
 		t.Fatalf("到账消息不能带付款人：\n%s", text)
 	}
-	if o.PaidAmount != o.Amount && !strings.Contains(text, "（订单 ¥1.00）") {
+	if o.PaidAmount != o.Amount && !strings.Contains(text, "订单金额　¥1.00") {
 		t.Fatalf("实付和订单金额不同时注明订单金额：\n%s", text)
 	}
 	deliver(t, e, m)
@@ -476,10 +484,13 @@ func TestBusinessMessages(t *testing.T) {
 		t.Fatalf("申诉发一条：%+v", got)
 	}
 	text = got[0].Text
-	for _, want := range []string{"付款申诉", "金额付错", "¥2.50", "订单 " + o.TradeNo, "/admin/assistance"} {
+	for _, want := range []string{"<b>付款申诉 · 金额付错</b>", "申报金额　¥2.50", "订单　<code>" + o.TradeNo + "</code>"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("申诉消息缺 %q：\n%s", want, text)
 		}
+	}
+	if !strings.Contains(got[0].Markup, "/admin/assistance") {
+		t.Fatalf("申诉消息的按钮打开申诉页：%s", got[0].Markup)
 	}
 	if strings.Contains(text, "PRIVATE") {
 		t.Fatalf("申诉消息不能带联系方式和说明：\n%s", text)
@@ -511,7 +522,7 @@ func TestBusinessMessages(t *testing.T) {
 	c.Add(time.Second)
 	deliver(t, e, m)
 	got = f.messages()
-	if len(got) != 1 || !strings.Contains(got[0].Text, "2 笔共 ¥") || !strings.Contains(got[0].Text, "/admin/orders?state=paid") {
+	if len(got) != 1 || !strings.Contains(got[0].Text, "2 笔共 ¥") || !strings.Contains(got[0].Markup, "/admin/orders?state=paid") {
 		t.Fatalf("重发时两笔合成一条：%+v", got)
 	}
 	if st, _ := m.State(e.Ctx); st.SentAt <= st.SendErrorAt {
@@ -530,6 +541,46 @@ func TestBusinessMessages(t *testing.T) {
 	}
 	if got := eventStatus(t, e); got["paid:skipped"] != 2 || got["paid:sent"] != 3 {
 		t.Fatalf("关掉后记为跳过：%v", got)
+	}
+}
+
+// 测试消息：每种用示例数据发一条，标“【测试】”，不动告警和待发队列；不认识的类型报错。
+func TestTestMessages(t *testing.T) {
+	e, m, f, _ := setup(t)
+	configure(t, e, m, 42)
+	if err := m.Test(e.Ctx, "nope"); !errors.Is(err, monitor.ErrTestKind) {
+		t.Fatalf("不认识的类型：%v", err)
+	}
+	if err := m.Test(e.Ctx, "all"); err != nil {
+		t.Fatal(err)
+	}
+	got := f.messages()
+	if len(got) != len(monitor.TestKinds) {
+		t.Fatalf("每种各发一条：%+v", got)
+	}
+	for i, want := range []string{"🔴 <b>【测试】示例渠道", "🟢 <b>【测试】已恢复：示例渠道", "🟢 <b>【测试】收款到账 · ¥12.00</b>", "📨 <b>【测试】付款申诉 · 已付款未到账</b>"} {
+		if !strings.HasPrefix(got[i].Text, want) || got[i].ParseMode != "HTML" || got[i].Markup == "" {
+			t.Errorf("第 %d 条应以 %q 开头：%+v", i+1, want, got[i])
+		}
+	}
+	if n, _ := e.DB().NewSelect().Model((*store.Alert)(nil)).Count(e.Ctx); n != 0 {
+		t.Fatalf("测试消息不开告警：%d", n)
+	}
+	if n, _ := e.DB().NewSelect().Model((*store.AdminEvent)(nil)).Count(e.Ctx); n != 0 {
+		t.Fatalf("测试消息不进待发队列：%d", n)
+	}
+	if st, _ := m.State(e.Ctx); st.SentAt == 0 {
+		t.Fatalf("发出后记下时间：%+v", st)
+	}
+
+	// 对外地址不是 https 时不做按钮，链接写进正文。
+	f.reset()
+	m.PublicURL = "http://127.0.0.1:8080"
+	if err := m.Test(e.Ctx, "paid"); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.messages(); len(got) != 1 || got[0].Markup != "" || !strings.Contains(got[0].Text, "查看订单：http://127.0.0.1:8080/admin/orders") {
+		t.Fatalf("http 地址写进正文：%+v", got)
 	}
 }
 
