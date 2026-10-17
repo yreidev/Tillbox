@@ -444,6 +444,26 @@ func TestCashierChoosesType(t *testing.T) {
 	if r, m := postJSON(t, p.down, base+"/go", nil); r.Status != http.StatusOK || m["url"] != g["qrcode"] {
 		t.Errorf("去付款：%d %v", r.Status, m)
 	}
+	// 再换微信被上游拒绝：订单还是支付宝，原来的付款信息照样能用。
+	if r, m := postJSON(t, p.down, base+"/pay", map[string]string{"type": "wxpay"}); r.Status != http.StatusBadGateway {
+		t.Errorf("换微信：%d %v", r.Status, m)
+	}
+	if view := p.down.Get(base).JSON(t); view["pay_type"] != "alipay" || view["guide"] == nil {
+		t.Errorf("换微信失败后收银台：%v", view)
+	}
+	if r, m := postJSON(t, p.down, base+"/go", nil); r.Status != http.StatusOK || m["url"] != g["qrcode"] {
+		t.Errorf("换微信失败后去付款：%d %v", r.Status, m)
+	}
+	// 旧版本留下的订单：支付方式被失败的预下单改掉了，选回原来的方式时改回来。
+	if _, err := p.down.DB().NewUpdate().Model((*store.Order)(nil)).Set("pay_type = ?", "wxpay").Where("id = ?", o.ID).Exec(p.down.Ctx); err != nil {
+		t.Fatal(err)
+	}
+	if r, m := postJSON(t, p.down, base+"/pay", map[string]string{"type": "alipay"}); r.Status != http.StatusOK || m["pay_type"] != "alipay" {
+		t.Errorf("选回支付宝：%d %v", r.Status, m)
+	}
+	if view := p.down.Get(base).JSON(t); view["pay_type"] != "alipay" || view["guide"] == nil {
+		t.Errorf("选回支付宝后收银台：%v", view)
+	}
 	// 付款后通知里带上付款人选的方式。
 	uo, err := p.up.App.Orders.Find(p.up.Ctx, p.um.ID, "", o.TradeNo)
 	if err != nil {

@@ -127,7 +127,8 @@ func (s *Service) Payment(ctx context.Context, orderID int64) (*store.UpstreamPa
 }
 
 // Prepare 按支付方式向上游预下单。同一订单已经用这个支付方式预下单过的，直接返回原结果；
-// 换了支付方式就重新预下单（上游同一订单号允许换方式）。base 是本系统的对外地址。
+// 换了支付方式就重新预下单（上游同一订单号允许换方式）。预下单成功后才改订单的支付方式，
+// 失败时订单还是原来的方式，原来的预下单结果照样能用。base 是本系统的对外地址。
 func (s *Service) Prepare(ctx context.Context, o *store.Order, typ, base string) (*store.UpstreamPayment, error) {
 	c, row := s.Confirmer(o.Channel)
 	if c == nil {
@@ -152,20 +153,17 @@ func (s *Service) Prepare(ctx context.Context, o *store.Order, typ, base string)
 			return nil, err
 		}
 		if up != nil && up.PayType == typ && up.ChannelID == row.ID {
+			// 旧版本预下单失败时也改了订单的支付方式，这里顺手改回和预下单记录一致
+			if cur.PayType != typ {
+				if err := setPayType(ctx, s.db, cur.ID, typ, store.Ms(s.Now())); err != nil {
+					return nil, err
+				}
+			}
 			return up, nil
 		}
-		if cur.PayType != typ {
-			res, err := s.db.NewUpdate().Model((*store.Order)(nil)).Set("pay_type = ?", typ).Set("updated_at = ?", store.Ms(s.Now())).
-				Where("id = ?", cur.ID).Where("status = ?", store.OrderPending).Exec(ctx)
-			if err != nil {
-				return nil, err
-			}
-			if n, _ := res.RowsAffected(); n != 1 {
-				return nil, ErrNotPending
-			}
-			cur.PayType = typ
-		}
-		pay, err := c.Prepay(ctx, cur, base)
+		next := *cur
+		next.PayType = typ
+		pay, err := c.Prepay(ctx, &next, base)
 		if err != nil {
 			s.record(o.Channel, func(st *Status, now int64) { st.PrepayErrAt, st.PrepayErr = now, err.Error(); st.Failures++ })
 			slog.Warn("上游预下单失败", "trade_no", cur.TradeNo, "channel", cur.Channel, "type", typ, "err", err)
@@ -177,12 +175,20 @@ func (s *Service) Prepare(ctx context.Context, o *store.Order, typ, base string)
 			OrderID: cur.ID, ChannelID: row.ID, PayType: typ, TradeNo: pay.TradeNo, InfoType: pay.InfoType, Info: pay.Info,
 			CreatedAt: nowMs, UpdatedAt: nowMs,
 		}
-		_, err = s.db.NewInsert().Model(up).
-			On("CONFLICT (order_id) DO UPDATE").
-			Set("channel_id = EXCLUDED.channel_id").Set("pay_type = EXCLUDED.pay_type").Set("trade_no = EXCLUDED.trade_no").
-			Set("info_type = EXCLUDED.info_type").Set("info = EXCLUDED.info").Set("check_error = ''").
-			Set("updated_at = EXCLUDED.updated_at").
-			Exec(ctx)
+		err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+			if cur.PayType != typ {
+				if err := setPayType(ctx, tx, cur.ID, typ, nowMs); err != nil {
+					return err
+				}
+			}
+			_, err := tx.NewInsert().Model(up).
+				On("CONFLICT (order_id) DO UPDATE").
+				Set("channel_id = EXCLUDED.channel_id").Set("pay_type = EXCLUDED.pay_type").Set("trade_no = EXCLUDED.trade_no").
+				Set("info_type = EXCLUDED.info_type").Set("info = EXCLUDED.info").Set("check_error = ''").
+				Set("updated_at = EXCLUDED.updated_at").
+				Exec(ctx)
+			return err
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -193,6 +199,19 @@ func (s *Service) Prepare(ctx context.Context, o *store.Order, typ, base string)
 	}
 	o.PayType = typ
 	return v.(*store.UpstreamPayment), nil
+}
+
+// setPayType 改待支付订单的支付方式；订单已经不是待支付时返回 ErrNotPending。
+func setPayType(ctx context.Context, db bun.IDB, id int64, typ string, now int64) error {
+	res, err := db.NewUpdate().Model((*store.Order)(nil)).Set("pay_type = ?", typ).Set("updated_at = ?", now).
+		Where("id = ?", id).Where("status = ?", store.OrderPending).Exec(ctx)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return ErrNotPending
+	}
+	return nil
 }
 
 // Notify 处理上游的回调：验签、核对订单，再交给流水确认到账。不合格的回调返回 *BadNotify。
