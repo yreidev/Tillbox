@@ -32,7 +32,7 @@ const (
 
 var (
 	ErrNoToken = errors.New("还没有填 Telegram 机器人 Token")
-	ErrNoChats = errors.New("还没有绑定接收告警的 Telegram 账号")
+	ErrNoChats = errors.New("还没有绑定接收通知的 Telegram 账号")
 )
 
 // Binding 是正在进行的绑定：管理员打开 Link，在 Telegram 里点 Start，机器人收到“/start 验证码”就记下这个会话。
@@ -43,7 +43,7 @@ type Binding struct {
 	code      string
 }
 
-// Telegram 用机器人给绑定的单聊发告警。
+// Telegram 用机器人给绑定的单聊发告警和业务消息。
 type Telegram struct {
 	DB       *bun.DB
 	Settings *settings.Service
@@ -80,15 +80,22 @@ func clean(err error, token string) error {
 	return errors.New(strings.ReplaceAll(err.Error(), token, "***"))
 }
 
-// Configure 校验 Token（调 getMe）并保存。token 为空时只改提醒间隔。换成另一个机器人时，
+// Prefs 是发哪些消息、多久再提醒，和机器人无关的部分。
+type Prefs struct {
+	RemindHours int  `json:"remind_hours"`
+	Paid        bool `json:"paid"`
+	Claims      bool `json:"claims"`
+}
+
+// Configure 校验 Token（调 getMe）并保存。token 为空时只改 p。换成另一个机器人时，
 // 原来绑定的会话收不到新机器人的消息，一起清掉。
-func (t *Telegram) Configure(ctx context.Context, token string, remindHours int) (settings.Telegram, error) {
+func (t *Telegram) Configure(ctx context.Context, token string, p Prefs) (settings.Telegram, error) {
 	cur, err := t.Settings.Telegram(ctx)
 	if err != nil {
 		return cur, err
 	}
 	next := cur
-	next.RemindHours = remindHours
+	next.RemindHours, next.Paid, next.Claims = p.RemindHours, p.Paid, p.Claims
 	token = strings.TrimSpace(token)
 	if token != "" {
 		b, err := t.bot(token)
@@ -118,10 +125,10 @@ func (t *Telegram) Configure(ctx context.Context, token string, remindHours int)
 	return next, nil
 }
 
-// Clear 删掉 Token 和全部绑定，不再发告警。
+// Clear 删掉 Token 和全部绑定，不再发通知。
 func (t *Telegram) Clear(ctx context.Context) error {
 	t.CancelBind()
-	if err := t.Settings.SaveTelegram(ctx, settings.Telegram{RemindHours: 1}); err != nil {
+	if err := t.Settings.SaveTelegram(ctx, settings.DefaultTelegram()); err != nil {
 		return err
 	}
 	_, err := t.DB.NewDelete().Model((*store.TelegramChat)(nil)).Where("1 = 1").Exec(ctx)
@@ -256,7 +263,7 @@ func (t *Telegram) onUpdate(ctx context.Context, b *bot.Bot, u *models.Update, c
 		}
 	}
 	if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(arg)), []byte(code)) != 1 {
-		reply("验证码不对或已经过期，请回 Tillbox 后台重新点“绑定”。")
+		reply("验证码不对或已经过期，请回 Tillbox 后台重新点“添加接收人”。")
 		return
 	}
 	chat := &store.TelegramChat{ChatID: m.Chat.ID, Name: chatName(m.Chat), CreatedAt: store.Ms(t.Now())}
@@ -266,7 +273,7 @@ func (t *Telegram) onUpdate(ctx context.Context, b *bot.Bot, u *models.Update, c
 		reply("绑定失败：Tillbox 保存时出错，请稍后在后台重试。")
 		return
 	}
-	reply("绑定成功。Tillbox 的告警会发到这里。")
+	reply("绑定成功。Tillbox 的告警和收款通知会发到这里。")
 	stop()
 }
 

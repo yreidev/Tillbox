@@ -67,7 +67,10 @@ func New(ctx context.Context, cfg *config.Config, db *bun.DB, box *secret.Box, u
 	a.Signer = &notify.Signer{Merchants: a.Merchants, Settings: st}
 	a.Notifier = notify.NewWorker(db, a.Signer)
 	a.Maintenance = maintenance.New(db, st, cfg.DataDir)
-	a.Orders.OnPaid = a.Notifier.Wake
+	a.Orders.OnPaid = func() {
+		a.Notifier.Wake()
+		a.Monitor.Wake()
+	}
 
 	a.Ledger = ledger.New(db, a.Orders)
 	a.Pollers = ledger.NewPollers(db, a.Ledger, st)
@@ -91,6 +94,7 @@ func New(ctx context.Context, cfg *config.Config, db *bun.DB, box *secret.Box, u
 			Maintenance: a.Maintenance, Assistance: a.Assistance, Now: time.Now,
 		},
 	}
+	a.Assistance.OnClaim = a.Monitor.Wake
 
 	proxy := &web.Proxy{Trusted: cfg.TrustedPrefixes, PublicURL: cfg.PublicURL}
 	gw := &gateway.Server{

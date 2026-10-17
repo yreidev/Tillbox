@@ -34,6 +34,8 @@ type Service struct {
 	actionMu sync.Mutex
 	claimMu  sync.Mutex
 	wake     chan struct{}
+	// OnClaim 在付款人提交申诉后调用（用来唤醒管理员消息的队列）。
+	OnClaim func()
 }
 
 type State struct {
@@ -158,8 +160,16 @@ func (s *Service) add(ctx context.Context, c *store.AssistanceCase) error {
 	c.CreatedAt = now
 	c.UpdatedAt = now
 	c.PublicReply = "已收到，等待核查付款及订单状态。"
-	_, err := s.DB.NewInsert().Model(c).On("CONFLICT (dedupe_key) DO NOTHING").Exec(ctx)
-	return err
+	return s.DB.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewInsert().Model(c).On("CONFLICT (dedupe_key) DO NOTHING").Exec(ctx); err != nil {
+			return err
+		}
+		// 付款人提交的申诉同时排一条给管理员的消息。
+		if c.Source != "payer" || c.ID == 0 {
+			return nil
+		}
+		return store.QueueAdminEvent(ctx, tx, store.AdminEventClaim, c.ID)
+	})
 }
 
 func (s *Service) RunOnce(ctx context.Context) (err error) {

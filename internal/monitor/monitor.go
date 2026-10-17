@@ -45,7 +45,10 @@ type Service struct {
 	// Now 可以在测试里替换。
 	Now func() time.Time
 
-	mu sync.Mutex // 同一时刻只评估一次
+	mu sync.Mutex // 同一时刻只评估或发送一次
+
+	wake     chan struct{}
+	wakeOnce sync.Once
 }
 
 func (s *Service) State(ctx context.Context) (State, error) {
@@ -54,20 +57,29 @@ func (s *Service) State(ctx context.Context) (State, error) {
 	return v, err
 }
 
-// Run 定时检查，直到 ctx 结束。
+// Run 定时检查、发业务消息，直到 ctx 结束。被 Wake 唤醒时只发业务消息。
 func (s *Service) Run(ctx context.Context) {
 	s.Telegram.setBase(ctx)
 	defer s.Telegram.CancelBind()
 	t := time.NewTicker(Every)
 	defer t.Stop()
+	evaluate := true
 	for {
-		if err := s.Evaluate(ctx); err != nil && ctx.Err() == nil {
-			slog.Error("监控检查失败", "err", err)
+		if evaluate {
+			if err := s.Evaluate(ctx); err != nil && ctx.Err() == nil {
+				slog.Error("监控检查失败", "err", err)
+			}
+		}
+		if err := s.Deliver(ctx); err != nil && ctx.Err() == nil {
+			slog.Error("发送业务消息失败", "err", err)
 		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+			evaluate = true
+		case <-s.wakeCh():
+			evaluate = false
 		}
 	}
 }
@@ -214,11 +226,7 @@ func duration(d time.Duration) string {
 
 // message 把这次的变化拼成一条纯文本消息：新的和变多的在前，仍未恢复的其次，恢复的最后。
 func (s *Service) message(ctx context.Context, events []event, now time.Time) string {
-	site, err := s.Settings.Site(ctx)
-	if err != nil || site.Name == "" {
-		site.Name = "Tillbox"
-	}
-	lines := []string{fmt.Sprintf("[%s 告警] %s", site.Name, now.In(epay.CST).Format("01-02 15:04"))}
+	lines := []string{fmt.Sprintf("[%s 告警] %s", s.siteName(ctx), now.In(epay.CST).Format("01-02 15:04"))}
 	icon := func(a *store.Alert) string {
 		if a.Level == store.AlertCritical {
 			return "🔴 "
@@ -257,15 +265,7 @@ func (s *Service) message(ctx context.Context, events []event, now time.Time) st
 
 // Test 发一条测试消息。
 func (s *Service) Test(ctx context.Context) error {
-	site, err := s.Settings.Site(ctx)
-	if err != nil {
-		return err
-	}
-	name := site.Name
-	if name == "" {
-		name = "Tillbox"
-	}
-	err = s.Telegram.Send(ctx, fmt.Sprintf("[%s] 测试消息：告警会发到这里。", name))
+	err := s.Telegram.Send(ctx, fmt.Sprintf("[%s] 测试消息：告警和收款通知会发到这里。", s.siteName(ctx)))
 	if err == nil {
 		s.mu.Lock()
 		defer s.mu.Unlock()

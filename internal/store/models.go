@@ -321,7 +321,7 @@ type Alert struct {
 	NotifiedAt int64  `bun:"notified_at" json:"notified_at"` // 上次成功发出通知的时刻
 }
 
-// TelegramChat 是绑定的、接收告警的 Telegram 单聊。
+// TelegramChat 是绑定的、接收管理员通知的 Telegram 单聊。
 type TelegramChat struct {
 	bun.BaseModel `bun:"table:telegram_chats"`
 
@@ -332,4 +332,26 @@ type TelegramChat struct {
 	SentAt    int64  `bun:"sent_at" json:"sent_at"`
 	ErrorAt   int64  `bun:"error_at" json:"error_at"`
 	Error     string `bun:"error" json:"error"`
+}
+
+// 发给管理员的业务消息
+const (
+	AdminEventPaid  = "paid"  // 收款到账，RefID 是订单编号
+	AdminEventClaim = "claim" // 付款人提交申诉，RefID 是申诉编号
+
+	AdminEventPending = "pending"
+	AdminEventSent    = "sent"
+	AdminEventSkipped = "skipped" // 没开这类消息、没配好 Telegram，或订单、申诉已经不在了
+)
+
+// AdminEvent 是一条待发给管理员的业务消息。和引起它的改动在同一个事务里写入，发送失败下一轮重发。
+type AdminEvent struct {
+	bun.BaseModel `bun:"table:admin_events"`
+
+	ID        int64  `bun:"id,pk,autoincrement"`
+	Kind      string `bun:"kind"`
+	RefID     int64  `bun:"ref_id"`
+	Status    string `bun:"status"`
+	CreatedAt int64  `bun:"created_at"`
+	DoneAt    int64  `bun:"done_at"`
 }

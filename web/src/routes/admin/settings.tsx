@@ -3,6 +3,7 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Form } from '@heroui/react'
 import { Copy } from '@gravity-ui/icons'
+import { TelegramSettings } from '../../components/telegram-settings'
 import { api, query } from '../../lib/api'
 import { time } from '../../lib/format'
 import type { AuditLog, Page, Payment, Settings } from '../../lib/types'
@@ -25,7 +26,7 @@ import {
   type Tone,
 } from '../../lib/ui'
 
-const tabs = ['payment', 'platform', 'site', 'audit'] as const
+const tabs = ['payment', 'platform', 'site', 'notify', 'audit'] as const
 type Tab = (typeof tabs)[number]
 
 export const Route = createFileRoute('/admin/settings')({
@@ -37,7 +38,13 @@ export const Route = createFileRoute('/admin/settings')({
 
 const settingsQuery = { queryKey: ['settings'], queryFn: () => api.get<Settings>('/web-api/admin/settings') }
 
-const tabText: Record<Tab, string> = { payment: '收款参数', platform: '平台密钥', site: '站点', audit: '审计日志' }
+const tabText: Record<Tab, string> = {
+  payment: '收款参数',
+  platform: '平台密钥',
+  site: '站点',
+  notify: '管理员通知',
+  audit: '审计日志',
+}
 
 function SettingsPage() {
   const { tab = 'payment' } = Route.useSearch()
@@ -46,7 +53,7 @@ function SettingsPage() {
   const body = (render: (s: Settings) => ReactNode) => (q.data ? render(q.data) : q.isPending ? <Loading /> : null)
   return (
     <div className="flex flex-col gap-4">
-      <PageHeader description="收款节奏、对接用的平台密钥、站点名称，以及所有管理操作的记录。" />
+      <PageHeader description="收款节奏、对接用的平台密钥、站点名称、发给管理员的 Telegram 通知，以及所有管理操作的记录。" />
       {q.isError && <Notice status="danger">{q.error.message}</Notice>}
       <FilterTabs<Tab>
         ariaLabel="设置分类"
@@ -57,6 +64,7 @@ function SettingsPage() {
         {tab === 'payment' && body((s) => <PaymentForm s={s} />)}
         {tab === 'platform' && body((s) => <Platform s={s} />)}
         {tab === 'site' && body((s) => <SiteForm s={s} />)}
+        {tab === 'notify' && <TelegramSettings />}
         {tab === 'audit' && <Audit />}
       </FilterTabs>
     </div>
@@ -367,11 +375,14 @@ const actionText: Record<string, string> = {
   'assistance.retry': '申诉重新核查',
   'assistance.resolve': '申诉结案',
   'ledger.verified_link': 'AI 补认到账',
+  'telegram.update': '修改管理员通知',
+  'telegram.clear': '清除 Telegram 设置',
+  'telegram.unbind': '解绑 Telegram 接收人',
 }
 
 // 删除、重置、撤销这类改变资金或凭据的操作标红，查看密钥标黄，方便扫一眼找出敏感操作。
 function actionTone(a: string): Tone {
-  if (/delete|reset|regenerate|unlink|keypair/.test(a)) return 'danger'
+  if (/delete|reset|regenerate|unlink|unbind|clear|keypair/.test(a)) return 'danger'
   if (/view_key|download|link|close/.test(a)) return 'warning'
   return 'default'
 }

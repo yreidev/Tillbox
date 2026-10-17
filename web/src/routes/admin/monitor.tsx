@@ -1,44 +1,27 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Drawer, Form } from '@heroui/react'
+import { Button } from '@heroui/react'
 import { linkVariants } from '@heroui/styles'
-import {
-  ArrowUpRightFromSquare,
-  ArrowsRotateRight,
-  ChevronRight,
-  CircleCheck,
-  CircleExclamation,
-  LogoTelegram,
-  PaperPlane,
-  Plus,
-  TriangleExclamation,
-} from '@gravity-ui/icons'
-import { encode } from 'uqr'
+import { ArrowsRotateRight, ChevronRight, CircleCheck, CircleExclamation, TriangleExclamation } from '@gravity-ui/icons'
 import { Chart, tooltipStyle, type ChartOption, type Palette } from '../../components/chart'
+import type { MonitorState, TelegramView } from '../../components/telegram-settings'
 import { api } from '../../lib/api'
 import { duration, relative, time } from '../../lib/format'
 import { channelHealth } from '../../lib/health'
 import { useNow } from '../../lib/now'
 import { channelTypeText, type ChannelView } from '../../lib/types'
 import {
-  Confirm,
-  ConfirmDialog,
-  Copyable,
   DataTable,
   Desc,
-  Dialog,
   Notice,
-  NumberInput,
   PageHeader,
   PageSkeleton,
   Panel,
   Pill,
-  Section,
   Segmented,
   Stack,
   StatusDot,
-  TextInput,
   cx,
   toastError,
   toastOK,
@@ -65,40 +48,7 @@ interface Alert {
   notified_at: number
 }
 
-interface MonitorState {
-  last_run_at: number
-  last_error: string
-  sent_at: number
-  send_error_at: number
-  send_error: string
-}
-
 type ChannelHealth = Pick<ChannelView, 'id' | 'key' | 'name' | 'type' | 'enabled' | 'problem' | 'ledger' | 'upstream'>
-
-interface Binding {
-  link: string
-  expires_at: number
-  /** 收消息出错（例如机器人设了 Webhook） */
-  error: string
-}
-
-interface TelegramChat {
-  id: number
-  chat_id: number
-  name: string
-  created_at: number
-  sent_at: number
-  error_at: number
-  error: string
-}
-
-interface TelegramView {
-  configured: boolean
-  bot_username: string
-  remind_hours: number
-  chats: TelegramChat[]
-  binding: Binding | null
-}
 
 interface Monitor {
   alerts: Alert[]
@@ -130,8 +80,7 @@ function MonitorPage() {
   const q = useQuery({
     queryKey: monitorKey,
     queryFn: () => api.get<Monitor>('/web-api/admin/monitor'),
-    // 等待绑定 Telegram 时勤快一点，绑好了马上能看到
-    refetchInterval: (query) => (query.state.data?.telegram.binding ? 2_000 : 15_000),
+    refetchInterval: 15_000,
   })
   const check = useMutation({
     mutationFn: () => api.post<Monitor>('/web-api/admin/monitor/check'),
@@ -170,14 +119,14 @@ function MonitorPage() {
             </Notice>
           )}
           {d.telegram.configured && d.state.send_error_at > d.state.sent_at && (
-            <Notice status="warning" title="告警消息没发出去">
+            <Notice status="warning" title="Telegram 消息没发出去">
               {relative(d.state.send_error_at, now)}：{d.state.send_error}。下一轮检查会重发。
             </Notice>
           )}
           <AlertsPanel alerts={d.alerts} state={d.state} telegram={d.telegram} now={now} />
           <div className="grid items-start gap-4 lg:grid-cols-2">
             <ChannelsPanel channels={d.channels} now={now} />
-            <TelegramPanel tg={d.telegram} state={d.state} now={now} />
+            <NotifyPanel tg={d.telegram} state={d.state} now={now} />
           </div>
           <TrendsPanel />
           <ResolvedPanel alerts={d.resolved} />
@@ -313,406 +262,52 @@ function ChannelsPanel({ channels, now }: { channels: ChannelHealth[]; now: numb
   )
 }
 
-function TelegramPanel({ tg, state, now }: { tg: TelegramView; state: MonitorState; now: number }) {
-  const qc = useQueryClient()
-  const [editing, setEditing] = useState(false)
-  const [bindOpen, setBindOpen] = useState(false)
-  // cancelled 记下管理员自己取消了绑定，prev 是上次看到的绑定链接，用来判断绑定是不是成功了
-  const cancelled = useRef(false)
-  const prev = useRef<Binding | null>(null)
-  const refresh = () => qc.invalidateQueries({ queryKey: monitorKey })
-  const bind = useMutation({
-    mutationFn: () => api.post<Binding>('/web-api/admin/monitor/telegram/bind'),
-    onSuccess: (b) => {
-      cancelled.current = false
-      qc.setQueryData<Monitor>(monitorKey, (old) => old && { ...old, telegram: { ...old.telegram, binding: b } })
-      setBindOpen(true)
-    },
-    onError: toastError,
-  })
-  const test = useMutation({
-    mutationFn: () => api.post('/web-api/admin/monitor/telegram/test'),
-    onSuccess: async () => {
-      await refresh()
-      toastOK('测试消息已发出，请到 Telegram 查看')
-    },
-    onError: async (e) => {
-      await refresh()
-      toastError(e)
-    },
-  })
-
-  // 绑定链接从“有”变成“没有”：没到期又不是管理员取消的，就是对方已经点了“开始”，绑定成功。
-  useEffect(() => {
-    const was = prev.current
-    prev.current = tg.binding
-    if (!was || tg.binding || cancelled.current) return
-    if (Date.now() < was.expires_at) toastOK('绑定成功，告警会发到这个 Telegram 账号')
-    else toastError(new Error('绑定链接已过期，没有绑上，请重新添加'))
-  }, [tg.binding])
-
-  const cancelBind = async () => {
-    cancelled.current = true
-    setBindOpen(false)
-    try {
-      await api.del('/web-api/admin/monitor/telegram/bind')
-    } catch (e) {
-      toastError(e)
-    }
-    await refresh()
-  }
-
+// NotifyPanel 只显示 Telegram 通知的状态，设置在“设置 → 管理员通知”。
+function NotifyPanel({ tg, state, now }: { tg: TelegramView; state: MonitorState; now: number }) {
   return (
     <Panel
       title="Telegram 通知"
       description="告警开始、笔数变多、恢复，以及一直没恢复时，发给绑定的人"
       extra={
-        tg.configured && (
-          <Button size="sm" variant="tertiary" onPress={() => setEditing(true)}>
-            设置
-          </Button>
-        )
+        <Link
+          to="/admin/settings"
+          search={{ tab: 'notify' }}
+          className={cx(linkVariants().base(), 'inline-flex items-center gap-0.5 text-sm')}
+        >
+          {tg.configured ? '设置' : '去设置'}
+          <ChevronRight className="size-3.5" />
+        </Link>
       }
     >
       {!tg.configured ? (
-        <div className="flex flex-col items-start gap-3">
-          <p className="text-sm text-muted">
-            还没设置机器人，告警只显示在这个页面。用 Telegram 的 @BotFather 建一个机器人，把 Token
-            填进来，再绑定自己的账号，有问题时手机上马上能收到。
-          </p>
-          <Button size="sm" onPress={() => setEditing(true)}>
-            <LogoTelegram />
-            设置机器人
-          </Button>
-        </div>
+        <p className="text-sm text-muted">
+          还没设置机器人，告警只显示在这个页面。到“设置 → 管理员通知”填上 Telegram
+          机器人并绑定自己的账号，有问题时手机上马上能收到；收款到账、付款申诉也可以一起推送。
+        </p>
       ) : (
-        <div className="flex flex-col gap-5">
-          <Desc
-            data={[
-              {
-                key: '机器人',
-                value: (
-                  <a
-                    className={linkVariants().base()}
-                    href={`https://t.me/${tg.bot_username}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    @{tg.bot_username}
-                  </a>
-                ),
-              },
-              {
-                key: '一直没恢复时',
-                value: tg.remind_hours ? `每 ${tg.remind_hours} 小时再提醒一次` : '不再提醒',
-              },
-              {
-                key: '上次发出告警',
-                value: <span className="tb-num">{state.sent_at ? relative(state.sent_at, now) : '还没发过'}</span>,
-              },
-            ]}
-          />
-          <Section
-            title="接收人"
-            extra={
-              <Button size="sm" variant="secondary" isPending={bind.isPending} onPress={() => bind.mutate()}>
-                <Plus />
-                添加接收人
-              </Button>
-            }
-          >
-            {tg.binding && !bindOpen && (
-              <Notice
-                status="accent"
-                action={
-                  <Button size="sm" variant="tertiary" onPress={() => setBindOpen(true)}>
-                    查看
-                  </Button>
-                }
-              >
-                有一个绑定链接在等对方打开，{relative(tg.binding.expires_at, now)}失效。
-              </Notice>
-            )}
-            {tg.chats.length === 0 ? (
-              <p className="text-sm text-muted">
-                还没有接收人，告警发不出去。点“添加接收人”，用自己的 Telegram 打开链接，点“开始”就绑好了。
-              </p>
-            ) : (
-              <ul className="flex flex-col divide-y divide-separator">
-                {tg.chats.map((c) => (
-                  <li key={c.id} className="flex items-center justify-between gap-3 py-2.5 first:pt-0 last:pb-0">
-                    <Stack
-                      className="min-w-0"
-                      main={<span className="break-all">{c.name}</span>}
-                      sub={
-                        c.error_at > c.sent_at ? (
-                          <span className="text-danger">
-                            {relative(c.error_at, now)}发送失败：{c.error}
-                          </span>
-                        ) : c.sent_at ? (
-                          `${relative(c.sent_at, now)}送达`
-                        ) : (
-                          `${relative(c.created_at, now)}绑定，还没发过消息`
-                        )
-                      }
-                    />
-                    <Confirm
-                      title="解除绑定？"
-                      content="之后告警不再发给这个账号。"
-                      okText="解除"
-                      danger
-                      onConfirm={async () => {
-                        try {
-                          await api.del(`/web-api/admin/monitor/telegram/chats/${c.id}`)
-                          await refresh()
-                          toastOK('已解除绑定')
-                        } catch (e) {
-                          toastError(e)
-                        }
-                      }}
-                    >
-                      <Button size="sm" variant="ghost" className="shrink-0">
-                        解除
-                      </Button>
-                    </Confirm>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Section>
-          <div>
-            <Button
-              size="sm"
-              variant="secondary"
-              isDisabled={tg.chats.length === 0}
-              isPending={test.isPending}
-              onPress={() => test.mutate()}
-            >
-              <PaperPlane />
-              发测试消息
-            </Button>
-          </div>
-        </div>
+        <Desc
+          data={[
+            { key: '机器人', value: `@${tg.bot_username}` },
+            {
+              key: '接收人',
+              value: tg.chats.length ? (
+                `${tg.chats.length} 个`
+              ) : (
+                <span className="text-warning">还没有，告警发不出去</span>
+              ),
+            },
+            {
+              key: '一直没恢复时',
+              value: tg.remind_hours ? `每 ${tg.remind_hours} 小时再提醒一次` : '不再提醒',
+            },
+            {
+              key: '上次发出消息',
+              value: <span className="tb-num">{state.sent_at ? relative(state.sent_at, now) : '还没发过'}</span>,
+            },
+          ]}
+        />
       )}
-      <TelegramDrawer open={editing} tg={tg} onClose={() => setEditing(false)} onSaved={refresh} />
-      <BindDialog binding={bindOpen ? tg.binding : null} now={now} onCancel={cancelBind} />
     </Panel>
-  )
-}
-
-function TelegramDrawer({
-  open,
-  tg,
-  onClose,
-  onSaved,
-}: {
-  open: boolean
-  tg: TelegramView
-  onClose: () => void
-  onSaved: () => Promise<void>
-}) {
-  return (
-    <Drawer.Backdrop isOpen={open} onOpenChange={(v) => !v && onClose()}>
-      <Drawer.Content placement="right">
-        <Drawer.Dialog className="w-[min(520px,100vw)] max-w-[100vw] p-0 sm:w-[min(520px,100vw)]">
-          <Drawer.CloseTrigger />
-          <Drawer.Header className="gap-0.5 border-b border-separator px-5 pt-5 pb-4 sm:px-6">
-            <p className="text-sm text-muted">告警通知</p>
-            <Drawer.Heading className="truncate pr-10 text-lg font-semibold">Telegram 机器人</Drawer.Heading>
-          </Drawer.Header>
-          {open && <TelegramForm tg={tg} onClose={onClose} onSaved={onSaved} />}
-        </Drawer.Dialog>
-      </Drawer.Content>
-    </Drawer.Backdrop>
-  )
-}
-
-function TelegramForm({
-  tg,
-  onClose,
-  onSaved,
-}: {
-  tg: TelegramView
-  onClose: () => void
-  onSaved: () => Promise<void>
-}) {
-  const formId = useId()
-  const [token, setToken] = useState('')
-  const [remind, setRemind] = useState<number | undefined>(tg.configured ? tg.remind_hours : 1)
-  const [busy, setBusy] = useState(false)
-  const [clearing, setClearing] = useState(false)
-  return (
-    <>
-      <Drawer.Body className="px-5 py-5 sm:px-6">
-        <Form
-          id={formId}
-          className="flex flex-col gap-7"
-          onSubmit={async (e) => {
-            e.preventDefault()
-            setBusy(true)
-            try {
-              const r = await api.put<TelegramView>('/web-api/admin/monitor/telegram', {
-                token: token.trim(),
-                remind_hours: remind ?? 0,
-              })
-              await onSaved()
-              toastOK(`已保存，机器人是 @${r.bot_username}`)
-              onClose()
-            } catch (err) {
-              toastError(err)
-            } finally {
-              setBusy(false)
-            }
-          }}
-        >
-          {!tg.configured && (
-            <Notice title="怎么建机器人">
-              <ol className="mt-1 list-decimal space-y-1 pl-4">
-                <li>在 Telegram 里搜索 @BotFather，打开后发送 /newbot。</li>
-                <li>按提示给机器人起名字和用户名（用户名以 bot 结尾）。</li>
-                <li>复制它回复的 Token，粘贴到下面，保存。</li>
-                <li>回到监控页点“添加接收人”，绑定自己的 Telegram 账号。</li>
-              </ol>
-            </Notice>
-          )}
-          <Section title="机器人">
-            <TextInput
-              label="Token"
-              type="password"
-              mono
-              autoComplete="off"
-              isRequired={!tg.configured}
-              maxLength={200}
-              placeholder={tg.configured ? `已设置 @${tg.bot_username}，不换就留空` : '123456789:AA…'}
-              description="保存时会向 Telegram 核对。换成另一个机器人会清空已绑定的接收人，需要重新绑定。"
-              value={token}
-              onChange={setToken}
-              validate={(v) => (!tg.configured && !v.trim() ? '请粘贴 @BotFather 给的 Token' : null)}
-            />
-          </Section>
-          <Section title="提醒">
-            <div className="flex items-end gap-3">
-              <NumberInput
-                label="一直没恢复时，每隔多久再提醒"
-                className="w-56"
-                isRequired
-                minValue={0}
-                maxValue={24}
-                value={remind}
-                onChange={setRemind}
-              />
-              <span className="pb-2.5 text-sm text-muted">小时</span>
-            </div>
-            <p className="-mt-1 text-xs text-muted">
-              默认 <span className="tb-num">1</span> 小时，可设 <span className="tb-num">0–24</span>，填 0
-              表示只在开始和恢复时各发一次。
-            </p>
-          </Section>
-          {tg.configured && (
-            <Section title="清除设置">
-              <p className="text-sm text-muted">
-                删除机器人 Token 和全部接收人，不再发告警消息。监控页照常检查和显示告警。
-              </p>
-              <div>
-                <Button size="sm" variant="danger-soft" onPress={() => setClearing(true)}>
-                  清除 Telegram 设置
-                </Button>
-              </div>
-            </Section>
-          )}
-        </Form>
-      </Drawer.Body>
-      <Drawer.Footer className="gap-2 border-t border-separator px-5 py-4 sm:px-6">
-        <Button variant="tertiary" onPress={onClose}>
-          取消
-        </Button>
-        <Button type="submit" form={formId} isPending={busy}>
-          保存
-        </Button>
-      </Drawer.Footer>
-      <ConfirmDialog
-        open={clearing}
-        onClose={() => setClearing(false)}
-        title="清除 Telegram 设置？"
-        okText="清除"
-        onConfirm={async () => {
-          await api.del('/web-api/admin/monitor/telegram')
-          await onSaved()
-          toastOK('已清除，告警不再发到 Telegram')
-          onClose()
-        }}
-      >
-        <p>机器人 Token 和 {tg.chats.length} 个接收人都会删除。之后要用得重新设置和绑定。</p>
-      </ConfirmDialog>
-    </>
-  )
-}
-
-// QRCode 把链接画成二维码。白底黑点，深色模式下也能扫。
-function QRCode({ text }: { text: string }) {
-  const { size, path } = useMemo(() => {
-    const qr = encode(text, { ecc: 'M', border: 2 })
-    let path = ''
-    qr.data.forEach((row, y) =>
-      row.forEach((on, x) => {
-        if (on) path += `M${x} ${y}h1v1h-1z`
-      }),
-    )
-    return { size: qr.size, path }
-  }, [text])
-  return (
-    <svg
-      viewBox={`0 0 ${size} ${size}`}
-      shapeRendering="crispEdges"
-      role="img"
-      aria-label="绑定链接的二维码"
-      className="size-44 rounded-xl bg-white"
-    >
-      <path d={path} fill="#000" />
-    </svg>
-  )
-}
-
-function BindDialog({ binding, now, onCancel }: { binding: Binding | null; now: number; onCancel: () => void }) {
-  return (
-    <Dialog
-      title="添加接收人"
-      size="sm"
-      open={binding !== null}
-      onClose={onCancel}
-      footer={
-        <Button variant="tertiary" onPress={onCancel}>
-          取消绑定
-        </Button>
-      }
-    >
-      {binding && (
-        <div className="flex flex-col items-center gap-4 text-center">
-          <p className="text-sm text-muted">
-            用要接收告警的 Telegram
-            账号打开这个链接（手机可以直接扫码），在机器人对话里点“开始”（Start）就绑好了。只支持和机器人单聊。
-          </p>
-          <QRCode text={binding.link} />
-          <Button size="sm" onPress={() => window.open(binding.link, '_blank', 'noopener,noreferrer')}>
-            <ArrowUpRightFromSquare />在 Telegram 中打开
-          </Button>
-          <div className="max-w-full text-xs break-all text-muted">
-            <Copyable text={binding.link} mono>
-              {binding.link}
-            </Copyable>
-          </div>
-          {binding.error ? (
-            <Notice status="danger" className="w-full text-left">
-              {binding.error}
-            </Notice>
-          ) : (
-            <StatusDot tone="accent" pulse>
-              正在等对方点“开始”，链接 {relative(binding.expires_at, now)}失效
-            </StatusDot>
-          )}
-        </div>
-      )}
-    </Dialog>
   )
 }
 

@@ -2,15 +2,12 @@ package admin
 
 import (
 	"context"
-	"errors"
 	"net/http"
-	"strconv"
 	"time"
 
 	"tillbox/internal/confirm"
 	"tillbox/internal/epay"
 	"tillbox/internal/ledger"
-	"tillbox/internal/monitor"
 	"tillbox/internal/store"
 )
 
@@ -24,14 +21,6 @@ type healthView struct {
 	Problem  string          `json:"problem"` // 不能收款的原因，能收款时为空
 	Ledger   *ledger.Status  `json:"ledger,omitempty"`
 	Upstream *confirm.Status `json:"upstream,omitempty"`
-}
-
-type telegramView struct {
-	Configured  bool                 `json:"configured"`
-	BotUsername string               `json:"bot_username"`
-	RemindHours int                  `json:"remind_hours"`
-	Chats       []store.TelegramChat `json:"chats"`
-	Binding     *monitor.Binding     `json:"binding"`
 }
 
 func (a *API) healthViews(ctx context.Context) []healthView {
@@ -54,21 +43,6 @@ func (a *API) healthViews(ctx context.Context) []healthView {
 		out = append(out, v)
 	}
 	return out
-}
-
-func (a *API) telegramView(ctx context.Context) (telegramView, error) {
-	cfg, err := a.Settings.Telegram(ctx)
-	if err != nil {
-		return telegramView{}, err
-	}
-	chats, err := a.Monitor.Telegram.Chats(ctx)
-	if err != nil {
-		return telegramView{}, err
-	}
-	return telegramView{
-		Configured: cfg.Token != "", BotUsername: cfg.BotUsername, RemindHours: cfg.RemindHours,
-		Chats: chats, Binding: a.Monitor.Telegram.Binding(),
-	}, nil
 }
 
 func (a *API) monitorPage(w http.ResponseWriter, r *http.Request) error {
@@ -193,77 +167,5 @@ func (a *API) trends(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 	ok(w, map[string]any{"buckets": buckets})
-	return nil
-}
-
-func (a *API) saveTelegram(w http.ResponseWriter, r *http.Request) error {
-	var in struct {
-		Token       string `json:"token"` // 留空表示不改
-		RemindHours int    `json:"remind_hours"`
-	}
-	if err := readJSON(r, &in); err != nil {
-		return err
-	}
-	if in.RemindHours < 0 || in.RemindHours > 24 {
-		return badRequest("再提醒间隔须为 0–24 小时")
-	}
-	cfg, err := a.Monitor.Telegram.Configure(r.Context(), in.Token, in.RemindHours)
-	if err != nil {
-		return badRequest(err.Error())
-	}
-	_ = store.Audit(r.Context(), a.DB, a.actor(r), "telegram.update", "", "@"+cfg.BotUsername)
-	tg, err := a.telegramView(r.Context())
-	if err != nil {
-		return err
-	}
-	ok(w, tg)
-	return nil
-}
-
-func (a *API) clearTelegram(w http.ResponseWriter, r *http.Request) error {
-	if err := a.Monitor.Telegram.Clear(r.Context()); err != nil {
-		return err
-	}
-	_ = store.Audit(r.Context(), a.DB, a.actor(r), "telegram.clear", "", "")
-	ok(w, map[string]any{})
-	return nil
-}
-
-func (a *API) bindTelegram(w http.ResponseWriter, r *http.Request) error {
-	b, err := a.Monitor.Telegram.Bind(r.Context())
-	if errors.Is(err, monitor.ErrNoToken) {
-		return badRequest(err.Error())
-	}
-	if err != nil {
-		return err
-	}
-	ok(w, b)
-	return nil
-}
-
-func (a *API) cancelBindTelegram(w http.ResponseWriter, _ *http.Request) error {
-	a.Monitor.Telegram.CancelBind()
-	ok(w, map[string]any{})
-	return nil
-}
-
-func (a *API) testTelegram(w http.ResponseWriter, r *http.Request) error {
-	if err := a.Monitor.Test(r.Context()); err != nil {
-		return badRequest("发送失败：" + err.Error())
-	}
-	ok(w, map[string]any{})
-	return nil
-}
-
-func (a *API) unbindTelegram(w http.ResponseWriter, r *http.Request) error {
-	id, err := pathID(r, "id")
-	if err != nil {
-		return err
-	}
-	if err := a.Monitor.Telegram.Unbind(r.Context(), id); err != nil {
-		return err
-	}
-	_ = store.Audit(r.Context(), a.DB, a.actor(r), "telegram.unbind", strconv.FormatInt(id, 10), "")
-	ok(w, map[string]any{})
 	return nil
 }

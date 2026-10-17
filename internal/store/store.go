@@ -92,6 +92,13 @@ func Time(ms int64) time.Time {
 	return time.UnixMilli(ms)
 }
 
+// QueueAdminEvent 排一条发给管理员的业务消息，同一个对象只排一次。
+func QueueAdminEvent(ctx context.Context, db bun.IDB, kind string, refID int64) error {
+	_, err := db.NewInsert().Model(&AdminEvent{Kind: kind, RefID: refID, Status: AdminEventPending, CreatedAt: Now()}).
+		On("CONFLICT (kind, ref_id) DO NOTHING").Exec(ctx)
+	return err
+}
+
 // Audit 记一条操作日志。
 func Audit(ctx context.Context, db bun.IDB, actor, action, target, detail string) error {
 	_, err := db.NewInsert().Model(&AuditLog{

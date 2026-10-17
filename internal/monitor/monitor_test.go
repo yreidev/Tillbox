@@ -14,7 +14,11 @@ import (
 	"time"
 
 	"tillbox/internal/apptest"
+	"tillbox/internal/assistance"
+	"tillbox/internal/epay"
 	"tillbox/internal/monitor"
+	"tillbox/internal/order"
+	"tillbox/internal/settings"
 	"tillbox/internal/store"
 )
 
@@ -141,7 +145,7 @@ func setup(t *testing.T) (*apptest.Env, *monitor.Service, *fakeTelegram, *clock)
 
 func configure(t *testing.T, e *apptest.Env, m *monitor.Service, chatIDs ...int64) {
 	t.Helper()
-	if _, err := m.Telegram.Configure(e.Ctx, token, 1); err != nil {
+	if _, err := m.Telegram.Configure(e.Ctx, token, monitor.Prefs{RemindHours: 1, Paid: true, Claims: true}); err != nil {
 		t.Fatal(err)
 	}
 	for _, id := range chatIDs {
@@ -324,7 +328,7 @@ func TestAlertsWithoutTelegram(t *testing.T) {
 
 func TestConfigure(t *testing.T) {
 	e, m, f, _ := setup(t)
-	if _, err := m.Telegram.Configure(e.Ctx, "123456:wrong", 1); err == nil || !strings.Contains(err.Error(), "不认这个 Token") || strings.Contains(err.Error(), "wrong") {
+	if _, err := m.Telegram.Configure(e.Ctx, "123456:wrong", monitor.Prefs{RemindHours: 1}); err == nil || !strings.Contains(err.Error(), "不认这个 Token") || strings.Contains(err.Error(), "wrong") {
 		t.Fatalf("错的 Token：%v", err)
 	}
 	configure(t, e, m, 42)
@@ -336,11 +340,14 @@ func TestConfigure(t *testing.T) {
 	if err := e.DB().NewSelect().Model(&raw).Where("key = 'telegram'").Scan(e.Ctx); err != nil || strings.Contains(raw.Value, "test-token") {
 		t.Fatalf("Token 要加密存库：%s %v", raw.Value, err)
 	}
-	// 只改提醒间隔，Token 不变。
-	if _, err := m.Telegram.Configure(e.Ctx, "", 0); err != nil {
+	if !cfg.Paid || !cfg.Claims {
+		t.Fatalf("到账和申诉默认都发：%+v", cfg)
+	}
+	// 只改提醒间隔和开关，Token 不变。
+	if _, err := m.Telegram.Configure(e.Ctx, "", monitor.Prefs{RemindHours: 0, Paid: false, Claims: true}); err != nil {
 		t.Fatal(err)
 	}
-	if cfg, _ := e.App.Settings.Telegram(e.Ctx); cfg.Token != token || cfg.RemindHours != 0 {
+	if cfg, _ := e.App.Settings.Telegram(e.Ctx); cfg.Token != token || cfg.RemindHours != 0 || cfg.Paid || !cfg.Claims {
 		t.Fatalf("留空不改 Token：%+v", cfg)
 	}
 	// 同一个机器人：绑定保留。
@@ -359,9 +366,191 @@ func TestConfigure(t *testing.T) {
 	if err := m.Telegram.Clear(e.Ctx); err != nil {
 		t.Fatal(err)
 	}
-	if cfg, _ := e.App.Settings.Telegram(e.Ctx); cfg.Token != "" || cfg.BotUsername != "" {
-		t.Fatalf("清除后：%+v", cfg)
+	if cfg, _ := e.App.Settings.Telegram(e.Ctx); cfg.Token != "" || cfg.BotUsername != "" || cfg != settings.DefaultTelegram() {
+		t.Fatalf("清除后回到默认：%+v", cfg)
 	}
+}
+
+// 旧版本存的设置里没有到账、申诉两项，读出来按默认都发。
+func TestTelegramDefaultsForOldSettings(t *testing.T) {
+	e := apptest.New(t)
+	if err := e.App.Settings.SaveRaw(e.Ctx, "telegram", map[string]any{"bot_id": 1, "bot_username": "old_bot", "remind_hours": 3}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := e.App.Settings.Telegram(e.Ctx)
+	if err != nil || !cfg.Paid || !cfg.Claims || cfg.RemindHours != 3 {
+		t.Fatalf("旧设置：%+v %v", cfg, err)
+	}
+}
+
+// paidOrder 下一单并按应付金额付款，返回到账后的订单。
+func paidOrder(t *testing.T, e *apptest.Env, m *apptest.Merchant, out, name string, cents int64) *store.Order {
+	t.Helper()
+	o, _, err := e.App.Orders.Create(e.Ctx, order.CreateInput{
+		MerchantID: m.ID, OutTradeNo: out, Version: order.V1, Channel: m.Channel, PayType: "alipay", Name: name,
+		Money: epay.FormatCents(cents), Amount: cents, NotifyURL: e.Hook.URL,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.Pay(o.TradeNo)
+	o = e.Order(o.TradeNo)
+	if o.Status != store.OrderPaid {
+		t.Fatalf("订单应已支付：%+v", o)
+	}
+	return o
+}
+
+func deliver(t *testing.T, e *apptest.Env, m *monitor.Service) {
+	t.Helper()
+	if err := m.Deliver(e.Ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func eventStatus(t *testing.T, e *apptest.Env) map[string]int {
+	t.Helper()
+	var evs []store.AdminEvent
+	if err := e.DB().NewSelect().Model(&evs).Scan(e.Ctx); err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]int{}
+	for _, ev := range evs {
+		out[ev.Kind+":"+ev.Status]++
+	}
+	return out
+}
+
+// 收款到账、付款人申诉：和改动同一个事务排队，发一次；不带付款人信息；发送失败下一轮重发；关掉的不发。
+func TestBusinessMessages(t *testing.T) {
+	e, m, f, c := setup(t)
+	mer := e.NewMerchant(nil)
+
+	// 没配 Telegram 时到账的单不积压：记为跳过，配好后也不补发。
+	paidOrder(t, e, mer, "before", "早到的单", 300)
+	deliver(t, e, m)
+	if got := eventStatus(t, e); got["paid:skipped"] != 1 || len(got) != 1 {
+		t.Fatalf("没配 Telegram：%v", got)
+	}
+	configure(t, e, m, 42)
+	deliver(t, e, m)
+	if got := f.messages(); len(got) != 0 {
+		t.Fatalf("配好后不补发跳过的：%+v", got)
+	}
+
+	o := paidOrder(t, e, mer, "A1", "账户充值", 100)
+	deliver(t, e, m)
+	got := f.messages()
+	if len(got) != 1 || got[0].ChatID != "42" {
+		t.Fatalf("到账发一条：%+v", got)
+	}
+	text := got[0].Text
+	for _, want := range []string{"收款到账", "¥" + epay.FormatCents(o.PaidAmount), "测试商户", "账户充值", "订单 " + o.TradeNo, "/admin/orders?q=" + o.TradeNo} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("到账消息缺 %q：\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "测试付款人") || strings.Contains(text, "test***") {
+		t.Fatalf("到账消息不能带付款人：\n%s", text)
+	}
+	if o.PaidAmount != o.Amount && !strings.Contains(text, "（订单 ¥1.00）") {
+		t.Fatalf("实付和订单金额不同时注明订单金额：\n%s", text)
+	}
+	deliver(t, e, m)
+	if got := f.messages(); len(got) != 1 {
+		t.Fatalf("发过的不再发：%+v", got)
+	}
+
+	// 付款人申诉：带类型、金额、订单号，不带联系方式和说明。
+	f.reset()
+	_, claim, err := e.App.Assistance.Submit(e.Ctx, o.ID, assistance.ClaimInput{
+		Kind: "wrong_amount", PaymentRef: "2026101700000000000077", Amount: 250, PaidAt: store.Now() - 60_000,
+		Contact: "PRIVATE-CONTACT", Message: "PRIVATE-MESSAGE",
+	})
+	if err != nil || claim == nil {
+		t.Fatalf("提交申诉：%v", err)
+	}
+	deliver(t, e, m)
+	got = f.messages()
+	if len(got) != 1 {
+		t.Fatalf("申诉发一条：%+v", got)
+	}
+	text = got[0].Text
+	for _, want := range []string{"付款申诉", "金额付错", "¥2.50", "订单 " + o.TradeNo, "/admin/assistance"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("申诉消息缺 %q：\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "PRIVATE") {
+		t.Fatalf("申诉消息不能带联系方式和说明：\n%s", text)
+	}
+	// 系统自己开的申诉（流水异常、通知失败）不发。
+	if got := eventStatus(t, e); got["claim:sent"] != 1 || got["claim:pending"] != 0 {
+		t.Fatalf("申诉消息状态：%v", got)
+	}
+
+	// 发送失败：留着，状态里记下错误，下一轮重发。
+	f.reset()
+	f.mu.Lock()
+	f.sendFail = true
+	f.mu.Unlock()
+	paidOrder(t, e, mer, "A2", "会员", 200)
+	paidOrder(t, e, mer, "A3", "会员", 500)
+	c.Add(time.Second)
+	deliver(t, e, m)
+	if st, _ := m.State(e.Ctx); st.SendError == "" || st.SendErrorAt <= st.SentAt {
+		t.Fatalf("发送失败要记下：%+v", st)
+	}
+	if got := eventStatus(t, e); got["paid:pending"] != 2 {
+		t.Fatalf("发送失败的留着：%v", got)
+	}
+	f.reset()
+	f.mu.Lock()
+	f.sendFail = false
+	f.mu.Unlock()
+	c.Add(time.Second)
+	deliver(t, e, m)
+	got = f.messages()
+	if len(got) != 1 || !strings.Contains(got[0].Text, "2 笔共 ¥") || !strings.Contains(got[0].Text, "/admin/orders?state=paid") {
+		t.Fatalf("重发时两笔合成一条：%+v", got)
+	}
+	if st, _ := m.State(e.Ctx); st.SentAt <= st.SendErrorAt {
+		t.Fatalf("重发成功后状态：%+v", st)
+	}
+
+	// 关掉到账消息：之后的到账记为跳过，不发。
+	f.reset()
+	if _, err := m.Telegram.Configure(e.Ctx, "", monitor.Prefs{RemindHours: 1, Paid: false, Claims: true}); err != nil {
+		t.Fatal(err)
+	}
+	paidOrder(t, e, mer, "A4", "会员", 100)
+	deliver(t, e, m)
+	if got := f.messages(); len(got) != 0 {
+		t.Fatalf("关掉后不发：%+v", got)
+	}
+	if got := eventStatus(t, e); got["paid:skipped"] != 2 || got["paid:sent"] != 3 {
+		t.Fatalf("关掉后记为跳过：%v", got)
+	}
+}
+
+// Run 被到账唤醒后马上发，不等下一轮检查。
+func TestWakeDeliversPaid(t *testing.T) {
+	e, m, f, _ := setup(t)
+	configure(t, e, m, 42)
+	run(t, m)
+	waitFor(t, "第一轮检查", func() bool {
+		st, _ := m.State(e.Ctx)
+		return st.LastRunAt > 0
+	})
+	o := paidOrder(t, e, e.NewMerchant(nil), "W1", "唤醒", 100)
+	waitFor(t, "到账消息", func() bool {
+		for _, s := range f.messages() {
+			if strings.Contains(s.Text, o.TradeNo) {
+				return true
+			}
+		}
+		return false
+	})
 }
 
 func run(t *testing.T, m *monitor.Service) {

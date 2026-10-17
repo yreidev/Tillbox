@@ -8,6 +8,7 @@ import {
   Description,
   FieldError,
   Input,
+  InputGroup,
   Label,
   ListBox,
   NumberField,
@@ -68,6 +69,7 @@ export function TextInput({
   mono,
   name,
   inputMode,
+  suffix,
 }: FieldProps & {
   value: string
   onChange: (v: string) => void
@@ -83,8 +85,11 @@ export function TextInput({
   mono?: boolean
   name?: string
   inputMode?: 'decimal' | 'numeric' | 'text' | 'url'
+  /** 输入框右侧的按钮（如显示/隐藏、粘贴），用 size="sm" variant="ghost" 的图标按钮 */
+  suffix?: ReactNode
 }) {
   const variant = useFieldVariant()
+  const inputProps = { placeholder, autoComplete, inputMode, className: mono ? 'tb-mono' : undefined }
   return (
     <TextField
       className={fieldWidth(className)}
@@ -103,13 +108,14 @@ export function TextInput({
       validate={validate}
     >
       {label && <Label>{label}</Label>}
-      <Input
-        variant={variant}
-        placeholder={placeholder}
-        autoComplete={autoComplete}
-        inputMode={inputMode}
-        className={mono ? 'tb-mono' : undefined}
-      />
+      {suffix ? (
+        <InputGroup variant={variant} fullWidth>
+          <InputGroup.Input {...inputProps} />
+          <InputGroup.Suffix className="gap-0.5 pe-1">{suffix}</InputGroup.Suffix>
+        </InputGroup>
+      ) : (
+        <Input variant={variant} {...inputProps} />
+      )}
       {description && <Description>{description}</Description>}
       <FieldError />
     </TextField>

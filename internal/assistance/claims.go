@@ -105,6 +105,9 @@ func (s *Service) Submit(ctx context.Context, orderID int64, in ClaimInput) (str
 		}
 	}
 	s.Wake()
+	if s.OnClaim != nil {
+		s.OnClaim()
+	}
 	return token, c, nil
 }
 

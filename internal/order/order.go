@@ -34,7 +34,7 @@ type Service struct {
 	mu       sync.Mutex
 	// Now 可以在测试里替换。
 	Now func() time.Time
-	// OnPaid 在确认到账、事务提交后调用（用来唤醒通知队列）。
+	// OnPaid 在确认到账、事务提交后调用（用来唤醒商户通知和管理员消息的队列）。
 	OnPaid func()
 }
 
@@ -288,7 +288,7 @@ func (s *Service) ExpireDue(ctx context.Context) (int64, error) {
 	return res.RowsAffected()
 }
 
-// MarkPaid 开一个事务把订单标成已支付，关联流水，并排入通知；then 不为空时在同一个事务里接着执行。
+// MarkPaid 开一个事务把订单标成已支付，关联流水，排入商户通知和给管理员的到账消息；then 不为空时在同一个事务里接着执行。
 // 调用方要先拿住 Lock。事务里只能用 tx，不能再碰 s.db 或读设置（设置在开事务前读好）。
 func (s *Service) MarkPaid(ctx context.Context, o *store.Order, t *store.Transaction, then func(ctx context.Context, tx bun.Tx) error) error {
 	return s.MarkPaidTx(ctx, o, t, nil, then)
@@ -351,7 +351,10 @@ func (s *Service) markPaid(ctx context.Context, db bun.IDB, o *store.Order, t *s
 		Set("status = EXCLUDED.status").Set("attempts = 0").Set("first_at = 0").
 		Set("next_at = EXCLUDED.next_at").Set("last_error = ''").Set("updated_at = EXCLUDED.updated_at").
 		Exec(ctx)
-	return err
+	if err != nil {
+		return err
+	}
+	return store.QueueAdminEvent(ctx, db, store.AdminEventPaid, o.ID)
 }
 
 // Stats 是一个商户的订单统计，给易支付的商户信息接口用。
