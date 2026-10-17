@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Form } from '@heroui/react'
-import { ArrowDownToLine, CircleCheck, TriangleExclamation } from '@gravity-ui/icons'
+import { ArrowDownToLine } from '@gravity-ui/icons'
 import { api } from '../../lib/api'
 import { relative, time } from '../../lib/format'
 import { useNow } from '../../lib/now'
@@ -32,7 +32,6 @@ interface Retention {
   audit_days: number
 }
 interface Operations {
-  issues: string[]
   retention: Retention
   state: { last_run_at: number; last_ok_at: number; last_error: string; archived: number }
   archives: { id: number; filename: string; records: number; sha256: string; created_at: number }[]
@@ -59,7 +58,7 @@ function OperationsPage() {
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
-        description="系统健康检查和在线记录归档。每 15 秒刷新。"
+        description="过了保留期的原始记录归档下线，归档批次可以下载。系统运行情况在监控页。每 15 秒刷新。"
         actions={
           d && (
             <Button
@@ -78,25 +77,6 @@ function OperationsPage() {
       {q.isPending && <PageSkeleton rows={2} />}
       {d && (
         <>
-          <Panel title="健康检查" description="查账、上游、通知、AI 处理和归档任务">
-            {d.issues.length === 0 ? (
-              <div className="flex items-center gap-3 rounded-xl bg-success-soft px-4 py-3 text-sm text-success-soft-foreground">
-                <CircleCheck className="size-5 shrink-0" />
-                一切正常，没有需要处理的问题。
-              </div>
-            ) : (
-              <ul className="flex flex-col divide-y divide-separator">
-                {d.issues.map((t, i) => (
-                  <li key={i} className="flex items-start gap-3 py-2.5 first:pt-0 last:pb-0">
-                    <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-warning-soft text-warning-soft-foreground">
-                      <TriangleExclamation className="size-3.5" />
-                    </span>
-                    <span className="pt-1 text-sm">{t}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Panel>
           <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
             <RetentionForm key={JSON.stringify(d.retention)} initial={d.retention} onSaved={refresh} />
             <Panel title="归档任务">

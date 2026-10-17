@@ -186,6 +186,8 @@ export interface Overview {
   open_anomalies: number
   dead_notifications: number
   retrying_notifications: number
+  /** 未恢复的监控告警 */
+  open_alerts: number
   ledgers: LedgerStatus[]
 }
 
@@ -240,16 +242,20 @@ export interface UpstreamLimit {
   max_at: number
 }
 
-/** 上游渠道的预下单、查单和回调状态（服务重启后清零） */
+/** 上游渠道的预下单、查单和回调状态（存在数据库里，重启后保留） */
 export interface UpstreamStatus {
   key: string
   channel_id: number
+  prepay_ok_at: number
+  prepay_err_at: number
+  prepay_err: string
+  /** 连续失败的预下单次数 */
+  prepay_failures: number
   check_ok_at: number
   check_err_at: number
   check_err: string
-  failures: number
-  prepay_err_at: number
-  prepay_err: string
+  /** 连续失败的查单次数 */
+  check_failures: number
   notify_at: number
   notify_err_at: number
   notify_err: string

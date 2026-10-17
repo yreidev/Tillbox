@@ -297,3 +297,39 @@ type AuditLog struct {
 	Detail    string `bun:"detail" json:"detail"`
 	CreatedAt int64  `bun:"created_at" json:"created_at"`
 }
+
+// 告警级别
+const (
+	AlertCritical = "critical" // 影响收款或到账，要尽快处理
+	AlertWarning  = "warning"  // 需要处理，但不影响收款
+)
+
+// Alert 是一条告警。同一个去重键同时只有一条进行中（ResolvedAt 为 0）。
+type Alert struct {
+	bun.BaseModel `bun:"table:alerts,alias:al"`
+
+	ID         int64  `bun:"id,pk,autoincrement" json:"id"`
+	Key        string `bun:"key" json:"key"`
+	Level      string `bun:"level" json:"level"`
+	Title      string `bun:"title" json:"title"`
+	Detail     string `bun:"detail" json:"detail"`
+	Link       string `bun:"link" json:"link"`   // 后台处理这个问题的页面
+	Count      int64  `bun:"count" json:"count"` // 待处理的笔数，变多时再通知一次
+	StartedAt  int64  `bun:"started_at" json:"started_at"`
+	LastSeenAt int64  `bun:"last_seen_at" json:"last_seen_at"`
+	ResolvedAt int64  `bun:"resolved_at" json:"resolved_at"`
+	NotifiedAt int64  `bun:"notified_at" json:"notified_at"` // 上次成功发出通知的时刻
+}
+
+// TelegramChat 是绑定的、接收告警的 Telegram 单聊。
+type TelegramChat struct {
+	bun.BaseModel `bun:"table:telegram_chats"`
+
+	ID        int64  `bun:"id,pk,autoincrement" json:"id"`
+	ChatID    int64  `bun:"chat_id" json:"chat_id"`
+	Name      string `bun:"name" json:"name"`
+	CreatedAt int64  `bun:"created_at" json:"created_at"`
+	SentAt    int64  `bun:"sent_at" json:"sent_at"`
+	ErrorAt   int64  `bun:"error_at" json:"error_at"`
+	Error     string `bun:"error" json:"error"`
+}

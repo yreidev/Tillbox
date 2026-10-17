@@ -6,6 +6,7 @@ toolchain go1.27.2
 
 require (
 	github.com/caarlos0/env/v11 v11.4.1
+	github.com/go-telegram/bot v1.27.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/pressly/goose/v3 v3.29.0
 	github.com/uptrace/bun v1.3.0

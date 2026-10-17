@@ -3,6 +3,7 @@ import { Link, Outlet, createFileRoute, redirect, useNavigate, useRouterState } 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Avatar, Button, Chip, Drawer, Dropdown, Form, Header, Label, Separator, Tooltip } from '@heroui/react'
 import {
+  Archive,
   ArrowRightArrowLeft,
   ArrowRightFromSquare,
   ArrowUpRightFromSquare,
@@ -16,11 +17,11 @@ import {
   FaceRobot,
   Flask,
   Gear,
+  HeartPulse,
   Key,
   LayoutSideContentLeft,
   Moon,
   Receipt,
-  Server,
   Sun,
 } from '@gravity-ui/icons'
 import { Logo } from '../../components/brand'
@@ -43,13 +44,13 @@ export const Route = createFileRoute('/admin')({
 })
 
 type Icon = ComponentType<SVGProps<SVGSVGElement>>
-type Badge = 'anomalies' | 'notifications' | 'cases'
+type Badge = 'anomalies' | 'notifications' | 'cases' | 'alerts'
 
 interface NavItem {
   to: string
   text: string
   icon: Icon
-  /** 菜单右侧的待办数：未处理的异常、放弃了的通知、等人工的申诉 */
+  /** 菜单右侧的待办数：未处理的异常、放弃了的通知、等人工的申诉、没恢复的告警 */
   badge?: Badge
 }
 
@@ -76,13 +77,19 @@ const groups: { title: string; items: NavItem[] }[] = [
   {
     title: '工具',
     items: [
+      { to: '/admin/monitor', text: '监控', icon: HeartPulse, badge: 'alerts' },
       { to: '/admin/payment-test', text: '支付测试', icon: Flask },
-      { to: '/admin/operations', text: '运维与归档', icon: Server },
+      { to: '/admin/operations', text: '数据归档', icon: Archive },
     ],
   },
 ]
 
-const badgeTone: Record<Badge, Tone> = { anomalies: 'warning', notifications: 'danger', cases: 'warning' }
+const badgeTone: Record<Badge, Tone> = {
+  anomalies: 'warning',
+  notifications: 'danger',
+  cases: 'warning',
+  alerts: 'danger',
+}
 
 const themes: { value: ThemePref; text: string; icon: Icon }[] = [
   { value: 'system', text: '跟随系统', icon: Display },
@@ -121,6 +128,7 @@ function useNavCounts(): Record<Badge, number> {
     anomalies: overview.data?.open_anomalies ?? 0,
     notifications: overview.data?.dead_notifications ?? 0,
     cases: cases.data?.counts?.manual ?? 0,
+    alerts: overview.data?.open_alerts ?? 0,
   }
 }
 

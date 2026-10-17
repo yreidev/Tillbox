@@ -13,7 +13,7 @@ RUFF_VERSION := 0.17.1
 GOBIN := $(or $(shell $(GO) env GOBIN),$(shell $(GO) env GOPATH)/bin)
 
 # 并发敏感的包，再开 race 检测跑一遍
-RACE_PKGS := ./internal/order ./internal/ledger ./internal/notify ./internal/admin ./internal/maintenance ./internal/assistance
+RACE_PKGS := ./internal/order ./internal/ledger ./internal/notify ./internal/admin ./internal/maintenance ./internal/assistance ./internal/confirm ./internal/monitor
 
 .PHONY: build web test test-race test-pg check ci release image tools deps lint fmt vuln
 

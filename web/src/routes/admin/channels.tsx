@@ -35,9 +35,10 @@ import {
 import { api, channelsQuery, meQuery } from '../../lib/api'
 import { relative, time } from '../../lib/format'
 import { useNow } from '../../lib/now'
+import { channelHealth } from '../../lib/health'
 import { decodeQRImage } from '../../lib/qrdecode'
 import type { AlipayQRConfig, ChannelType, ChannelView, UpstreamConfig, UpstreamLimit } from '../../lib/types'
-import { channelTypeText, ledgerErrorText, payTypeLabel, payTypeText } from '../../lib/types'
+import { channelTypeText, payTypeLabel, payTypeText } from '../../lib/types'
 import {
   Code,
   Confirm,
@@ -405,29 +406,9 @@ function LearnedLimits({ c }: { c: ChannelView }) {
   return <p className="text-xs text-muted">上游拒单时自动识别：{items.join('，')}</p>
 }
 
-// Health 是渠道的运行情况：经营码看查账，上游看查单和回调。
+// Health 是渠道的运行情况：经营码看查账，上游看预下单、查单和回调。
 function Health({ c }: { c: ChannelView }) {
-  const now = useNow()
-  const lines: { text: string; tone?: 'danger' | 'warning' }[] = []
-  if (c.ledger && c.enabled) {
-    const l = c.ledger
-    if (l.last_error) lines.push({ tone: l.failures > 0 ? 'danger' : 'warning', text: `查账${ledgerErrorText(l)}` })
-    else lines.push({ text: l.last_ok_at ? `${relative(l.last_ok_at, now)}查账成功` : '还没查过账' })
-    if (l.backlog_segments > 0) lines.push({ text: `历史补扫剩余 ${l.backlog_segments} 段` })
-  } else if (c.upstream) {
-    const u = c.upstream
-    if (u.failures > 0) {
-      const err = u.check_err_at > u.prepay_err_at ? `查单：${u.check_err}` : `预下单：${u.prepay_err}`
-      lines.push({ tone: u.failures >= 3 ? 'danger' : 'warning', text: `连续失败 ${u.failures} 次，${err}` })
-    } else {
-      lines.push({ text: u.check_ok_at ? `${relative(u.check_ok_at, now)}查单成功` : '本次启动后还没查过单' })
-    }
-    if (u.notify_err_at > u.notify_at)
-      lines.push({ tone: 'warning', text: `${relative(u.notify_err_at, now)}收到不合格的回调：${u.notify_err}` })
-    else if (u.notify_at) lines.push({ text: `${relative(u.notify_at, now)}收到回调` })
-  } else if (c.type === 'demo') {
-    lines.push({ text: '用 /web-api/dev/pay 模拟付款' })
-  }
+  const lines = channelHealth(c, useNow())
   return (
     <>
       {lines.map((l, i) => (

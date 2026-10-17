@@ -21,6 +21,7 @@ import (
 	"tillbox/internal/confirm"
 	"tillbox/internal/epay"
 	"tillbox/internal/merchant"
+	"tillbox/internal/monitor"
 	"tillbox/internal/settings"
 	"tillbox/internal/store"
 )
@@ -370,7 +371,7 @@ func TestPrepayFailure(t *testing.T) {
 	if fmt.Sprint(res["code"]) != "-2" || !strings.Contains(fmt.Sprint(res["msg"]), "暂时不可用") {
 		t.Fatalf("预下单失败：%v", res)
 	}
-	if st := p.down.App.Confirm.Status(p.ch.Key()); st.PrepayErr == "" || st.Failures != 1 {
+	if st := p.down.App.Confirm.Status(p.ch.Key()); st.PrepayErr == "" || st.PrepayFailures != 1 {
 		t.Errorf("渠道状态应记下预下单错误：%+v", st)
 	}
 	if _, err := p.up.DB().NewUpdate().Model((*store.Merchant)(nil)).Set("enabled = ?", true).Where("id = ?", p.um.ID).Exec(p.up.Ctx); err != nil {
@@ -383,6 +384,46 @@ func TestPrepayFailure(t *testing.T) {
 	o := p.down.Order(fmt.Sprint(res["trade_no"]))
 	if up := p.payment(o); up.TradeNo == "" {
 		t.Errorf("重试后应有预下单记录：%+v", up)
+	}
+}
+
+// 渠道状态存库：连续失败 3 次开告警；重启（新的服务从库里读回）后状态还在。
+func TestStatusPersists(t *testing.T) {
+	p := setup(t, 1)
+	if _, err := p.up.DB().NewUpdate().Model((*store.Merchant)(nil)).Set("enabled = ?", false).Where("id = ?", p.um.ID).Exec(p.up.Ctx); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 3 {
+		form := p.dm.SignMD5(map[string]string{"type": "alipay", "out_trade_no": fmt.Sprint("P", i), "notify_url": p.down.Hook.URL + "/n", "name": "测试商品", "money": "1", "clientip": "1.1.1.1"})
+		if res := p.down.PostForm("/mapi.php", form).JSON(t); fmt.Sprint(res["code"]) != "-2" {
+			t.Fatalf("预下单应失败：%v", res)
+		}
+	}
+	key := p.ch.Key()
+	st := p.down.App.Confirm.Status(key)
+	if st.PrepayFailures != 3 || st.PrepayErr == "" || st.CheckFailures != 0 {
+		t.Fatalf("渠道状态：%+v", st)
+	}
+	problems, err := p.down.App.Monitor.Checker.Check(p.down.Ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(problems, func(x monitor.Problem) bool {
+		return x.Key == "upstream_prepay:"+key && x.Level == store.AlertCritical && x.Detail == st.PrepayErr
+	}) {
+		t.Fatalf("连续失败 3 次应告警：%+v", problems)
+	}
+
+	if err := p.down.App.Confirm.Flush(p.down.Ctx); err != nil {
+		t.Fatal(err)
+	}
+	a := p.down.App
+	restarted := confirm.New(a.DB, settings.New(a.DB, a.Settings.Box()), a.Orders, a.Ledger, a.Channels)
+	if err := restarted.Load(p.down.Ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := restarted.Status(key); got != st {
+		t.Fatalf("重启后的状态：%+v，原来 %+v", got, st)
 	}
 }
 
@@ -556,7 +597,7 @@ func TestUpstreamLimits(t *testing.T) {
 	if res := mapi("L1", "alipay", "0.01"); fmt.Sprint(res["code"]) != "-1" || res["msg"] != "支付宝单笔最低 0.30 元" || count() != 1 {
 		t.Fatalf("低于上游最低金额：%v，上游收到 %d 次", res, count())
 	}
-	if st := p.down.App.Confirm.Status(p.ch.Key()); st.Failures != 0 || st.PrepayErr != "" {
+	if st := p.down.App.Confirm.Status(p.ch.Key()); st.PrepayFailures != 0 || st.PrepayErr != "" {
 		t.Errorf("金额被拒不算渠道失败：%+v", st)
 	}
 	if l := limits()["alipay"]; l.Min != "0.30" || l.MinAt == 0 {

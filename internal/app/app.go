@@ -20,6 +20,7 @@ import (
 	"tillbox/internal/ledger"
 	"tillbox/internal/maintenance"
 	"tillbox/internal/merchant"
+	"tillbox/internal/monitor"
 	"tillbox/internal/notify"
 	"tillbox/internal/order"
 	"tillbox/internal/secret"
@@ -40,6 +41,7 @@ type App struct {
 	Confirm     *confirm.Service
 	Notifier    *notify.Worker
 	Maintenance *maintenance.Service
+	Monitor     *monitor.Service
 	Signer      *notify.Signer
 	Auth        *admin.Auth
 	Handler     http.Handler
@@ -77,8 +79,18 @@ func New(ctx context.Context, cfg *config.Config, db *bun.DB, box *secret.Box, u
 	if err := a.Channels.Load(ctx); err != nil {
 		return nil, fmt.Errorf("加载支付渠道失败：%w", err)
 	}
-	a.Confirm = confirm.New(db, a.Orders, a.Ledger, a.Channels)
+	a.Confirm = confirm.New(db, st, a.Orders, a.Ledger, a.Channels)
+	if err := a.Confirm.Load(ctx); err != nil {
+		return nil, fmt.Errorf("读取上游渠道状态失败：%w", err)
+	}
 	a.Assistance = assistance.New(db, st, a.Orders, a.Ledger, a.Pollers, a.Confirm, a.Notifier)
+	a.Monitor = &monitor.Service{
+		DB: db, Settings: st, Telegram: monitor.NewTelegram(db, st), PublicURL: cfg.PublicURL, Now: time.Now,
+		Checker: &monitor.Checker{
+			DB: db, Settings: st, Channels: a.Channels, Pollers: a.Pollers, Confirm: a.Confirm,
+			Maintenance: a.Maintenance, Assistance: a.Assistance, Now: time.Now,
+		},
+	}
 
 	proxy := &web.Proxy{Trusted: cfg.TrustedPrefixes, PublicURL: cfg.PublicURL}
 	gw := &gateway.Server{
@@ -89,7 +101,7 @@ func New(ctx context.Context, cfg *config.Config, db *bun.DB, box *secret.Box, u
 	api := &admin.API{
 		Assistance: a.Assistance,
 		DB:         db, Auth: a.Auth, Merchants: a.Merchants, Orders: a.Orders, Ledger: a.Ledger, Pollers: a.Pollers, Confirm: a.Confirm, Channels: a.Channels,
-		Notifier: a.Notifier, Signer: a.Signer, Maintenance: a.Maintenance, Settings: st, ClientIP: proxy.ClientIP, Secure: proxy.Secure,
+		Notifier: a.Notifier, Signer: a.Signer, Maintenance: a.Maintenance, Settings: st, Monitor: a.Monitor, ClientIP: proxy.ClientIP, Secure: proxy.Secure,
 		BaseURL: proxy.BaseURL, Demo: cfg.Demo,
 	}
 	a.Handler = web.Handler(web.Deps{
@@ -100,9 +112,10 @@ func New(ctx context.Context, cfg *config.Config, db *bun.DB, box *secret.Box, u
 	return a, nil
 }
 
-// Run 跑后台任务（查账、上游查单、通知、订单过期、清理会话），直到 ctx 结束。
+// Run 跑后台任务（查账、上游查单、通知、订单过期、清理会话、监控告警），直到 ctx 结束。
 func (a *App) Run(ctx context.Context) {
 	go a.Assistance.Run(ctx)
+	go a.Monitor.Run(ctx)
 	go every(ctx, time.Hour, func() {
 		if _, err := a.Maintenance.Run(ctx, false); err != nil && ctx.Err() == nil {
 			slog.Error("历史记录归档失败，原始数据保留", "err", err)

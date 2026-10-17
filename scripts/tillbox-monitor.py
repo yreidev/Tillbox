@@ -39,7 +39,10 @@ SQL = """SELECT json_object(
 'automation',coalesce((SELECT json_object('enabled',json_extract(value,'$.enabled'),
     'interval_seconds',json_extract(value,'$.interval_seconds')) FROM settings WHERE key='automation'),'{}'),
 'automation_state',coalesce((SELECT value FROM settings WHERE key='automation_state'),'{}'),
-'assistance_manual',(SELECT count(*) FROM assistance_cases WHERE status='manual'));
+'assistance_manual',(SELECT count(*) FROM assistance_cases WHERE status='manual'),
+'monitor_state',coalesce((SELECT value FROM settings WHERE key='monitor_state'),'{}'),
+'telegram_ready',(SELECT count(*) FROM telegram_chats) > 0
+    AND coalesce((SELECT json_extract(value,'$.token') FROM settings WHERE key='telegram'),'') != '');
 """
 
 
@@ -68,7 +71,20 @@ def as_object(value):
     return value if isinstance(value, dict) else json.loads(value or '{}')
 
 
+def evaluate_alerting(state, now):
+    # Tillbox 自己发业务告警时，这里只确认它的告警任务还在跑、发得出去。错误原文在后台监控页看，这里不转发。
+    issues = {}
+    if now - state.get('last_run_at', 0) / 1000 > 300:
+        issues['alerting_stale'] = 'Tillbox 告警任务超过 5 分钟没有运行，业务告警可能发不出来'
+    if state.get('send_error_at', 0) > state.get('sent_at', 0):
+        issues['alerting_send'] = 'Tillbox 发不出 Telegram 告警，请到后台“监控”页查看原因'
+    return issues
+
+
 def evaluate_db(data, now):
+    # 后台配好了 Telegram 并绑定了会话时，查账、通知、AI 处理、归档这些业务问题由 Tillbox 自己发，这里不重复发。
+    if data.get('telegram_ready'):
+        return evaluate_alerting(as_object(data.get('monitor_state')), now)
     issues = {}
     maintenance = as_object(data['maintenance'])
     retention = as_object(data['retention'])

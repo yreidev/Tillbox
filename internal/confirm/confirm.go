@@ -20,6 +20,7 @@ import (
 	"tillbox/internal/channel/registry"
 	"tillbox/internal/ledger"
 	"tillbox/internal/order"
+	"tillbox/internal/settings"
 	"tillbox/internal/store"
 )
 
@@ -31,6 +32,8 @@ const (
 	KickGap      = 3 * time.Second
 	tick         = 5 * time.Second
 	maxPerRound  = 50
+	// statePrefix 是渠道状态在设置表里的键前缀，后面接渠道实例键。
+	statePrefix = "confirm_state:"
 )
 
 var (
@@ -44,23 +47,26 @@ type BadNotify struct{ Err error }
 func (e *BadNotify) Error() string { return e.Err.Error() }
 func (e *BadNotify) Unwrap() error { return e.Err }
 
-// Status 是一个上游渠道最近的查单和回调情况，给后台和运维巡检看。
+// Status 是一个上游渠道最近的预下单、查单和回调情况，给后台和告警用。存在设置表里，重启后接着用。
 type Status struct {
-	Key         string `json:"key"`
-	ChannelID   int64  `json:"channel_id"`
-	CheckOKAt   int64  `json:"check_ok_at"`  // 上次查单成功
-	CheckErrAt  int64  `json:"check_err_at"` // 上次查单失败
-	CheckErr    string `json:"check_err"`
-	Failures    int    `json:"failures"` // 连续失败的查单和预下单次数
-	PrepayErrAt int64  `json:"prepay_err_at"`
-	PrepayErr   string `json:"prepay_err"`
-	NotifyAt    int64  `json:"notify_at"` // 上次收到合格的回调
-	NotifyErrAt int64  `json:"notify_err_at"`
-	NotifyErr   string `json:"notify_err"`
+	Key            string `json:"key"`
+	ChannelID      int64  `json:"channel_id"`
+	PrepayOKAt     int64  `json:"prepay_ok_at"` // 上次预下单成功
+	PrepayErrAt    int64  `json:"prepay_err_at"`
+	PrepayErr      string `json:"prepay_err"`
+	PrepayFailures int    `json:"prepay_failures"` // 连续失败的预下单次数
+	CheckOKAt      int64  `json:"check_ok_at"`     // 上次查单成功
+	CheckErrAt     int64  `json:"check_err_at"`    // 上次查单失败
+	CheckErr       string `json:"check_err"`
+	CheckFailures  int    `json:"check_failures"` // 连续失败的查单次数
+	NotifyAt       int64  `json:"notify_at"`      // 上次收到合格的回调
+	NotifyErrAt    int64  `json:"notify_err_at"`
+	NotifyErr      string `json:"notify_err"`
 }
 
 type Service struct {
 	db       *bun.DB
+	settings *settings.Service
 	orders   *order.Service
 	ledger   *ledger.Ledger
 	channels *registry.Registry
@@ -73,13 +79,57 @@ type Service struct {
 	mu     sync.Mutex
 	kicked map[int64]bool
 	status map[string]*Status
+	dirty  map[string]bool // 改过、还没存库的渠道状态
 }
 
-func New(db *bun.DB, orders *order.Service, l *ledger.Ledger, channels *registry.Registry) *Service {
+func New(db *bun.DB, st *settings.Service, orders *order.Service, l *ledger.Ledger, channels *registry.Registry) *Service {
 	return &Service{
-		db: db, orders: orders, ledger: l, channels: channels, Now: time.Now,
-		kick: make(chan struct{}, 1), kicked: map[int64]bool{}, status: map[string]*Status{},
+		db: db, settings: st, orders: orders, ledger: l, channels: channels, Now: time.Now,
+		kick: make(chan struct{}, 1), kicked: map[int64]bool{}, status: map[string]*Status{}, dirty: map[string]bool{},
 	}
+}
+
+// Load 从库里读回各上游渠道的状态，启动时在 Run 之前调用。
+func (s *Service) Load(ctx context.Context) error {
+	for _, key := range s.keys() {
+		st := Status{Key: key, ChannelID: store.ChannelID(key)}
+		found, err := s.settings.Raw(ctx, statePrefix+key, &st)
+		if err != nil {
+			return err
+		}
+		if found {
+			s.mu.Lock()
+			s.status[key] = &st
+			s.mu.Unlock()
+		}
+	}
+	return nil
+}
+
+// Flush 把改过的状态存库。Run 每轮查单后调用；失败的下一轮再存。
+func (s *Service) Flush(ctx context.Context) error {
+	s.mu.Lock()
+	pending := make(map[string]Status, len(s.dirty))
+	for key := range s.dirty {
+		pending[key] = *s.status[key]
+	}
+	s.dirty = map[string]bool{}
+	s.mu.Unlock()
+	var first error
+	for key, st := range pending {
+		if _, _, ok := s.channels.ByKey(key); !ok {
+			continue // 渠道已经删了
+		}
+		if err := s.settings.SaveRaw(ctx, statePrefix+key, st); err != nil {
+			s.mu.Lock()
+			s.dirty[key] = true
+			s.mu.Unlock()
+			if first == nil {
+				first = err
+			}
+		}
+	}
+	return first
 }
 
 // Confirmer 返回订单所属渠道的确认型实例，不是确认型渠道时返回 nil。
@@ -101,6 +151,7 @@ func (s *Service) record(key string, f func(st *Status, nowMs int64)) {
 		s.status[key] = st
 	}
 	f(st, store.Ms(s.Now()))
+	s.dirty[key] = true
 }
 
 // Status 返回一个渠道最近的查单和回调情况。
@@ -179,11 +230,11 @@ func (s *Service) Prepare(ctx context.Context, o *store.Order, typ, base string)
 			return nil, err
 		}
 		if err != nil {
-			s.record(o.Channel, func(st *Status, now int64) { st.PrepayErrAt, st.PrepayErr = now, err.Error(); st.Failures++ })
+			s.record(o.Channel, func(st *Status, now int64) { st.PrepayErrAt, st.PrepayErr = now, err.Error(); st.PrepayFailures++ })
 			slog.Warn("上游预下单失败", "trade_no", cur.TradeNo, "channel", cur.Channel, "type", typ, "err", err)
 			return nil, err
 		}
-		s.record(o.Channel, func(st *Status, _ int64) { st.Failures = 0 })
+		s.record(o.Channel, func(st *Status, now int64) { st.PrepayOKAt, st.PrepayFailures = now, 0 })
 		nowMs := store.Ms(s.Now())
 		up = &store.UpstreamPayment{
 			OrderID: cur.ID, ChannelID: row.ID, PayType: typ, TradeNo: pay.TradeNo, InfoType: pay.InfoType, Info: pay.Info,
@@ -272,9 +323,9 @@ func (s *Service) Check(ctx context.Context, o *store.Order, up *store.UpstreamP
 	msg := ""
 	if qerr != nil {
 		msg = qerr.Error()
-		s.record(o.Channel, func(st *Status, now int64) { st.CheckErrAt, st.CheckErr = now, msg; st.Failures++ })
+		s.record(o.Channel, func(st *Status, now int64) { st.CheckErrAt, st.CheckErr = now, msg; st.CheckFailures++ })
 	} else {
-		s.record(o.Channel, func(st *Status, now int64) { st.CheckOKAt, st.Failures = now, 0 })
+		s.record(o.Channel, func(st *Status, now int64) { st.CheckOKAt, st.CheckFailures = now, 0 })
 	}
 	up.CheckedAt, up.CheckError, up.UpdatedAt = nowMs, msg, nowMs
 	if _, err := s.db.NewUpdate().Model(up).Column("checked_at", "check_error", "updated_at").WherePK().Exec(ctx); err != nil {
@@ -304,6 +355,9 @@ func (s *Service) Run(ctx context.Context) {
 	for {
 		if err := s.RunOnce(ctx); err != nil && ctx.Err() == nil {
 			slog.Error("上游查单失败", "err", err)
+		}
+		if err := s.Flush(ctx); err != nil && ctx.Err() == nil {
+			slog.Error("保存上游渠道状态失败", "err", err)
 		}
 		select {
 		case <-ctx.Done():

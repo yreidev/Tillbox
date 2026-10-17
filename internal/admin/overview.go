@@ -108,6 +108,10 @@ func (a *API) overview(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	alerts, err := a.Monitor.OpenCount(ctx)
+	if err != nil {
+		return err
+	}
 	ok(w, map[string]any{
 		"today":                  total[days-1],
 		"days":                   total,
@@ -116,6 +120,7 @@ func (a *API) overview(w http.ResponseWriter, r *http.Request) error {
 		"open_anomalies":         anomalies,
 		"dead_notifications":     dead,
 		"retrying_notifications": retrying,
+		"open_alerts":            alerts,
 		"ledgers":                a.enabledLedgers(),
 	})
 	return nil

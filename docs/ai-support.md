@@ -7,7 +7,7 @@
 1. 在后台填写模型接口 Base URL（通常以 `/v1` 结尾）、模型名称和 API Key，保存配置。使用兼容 Chat Completions 的接口；Base URL 后自动追加 `/chat/completions`。接口必须支持 `messages`、`response_format: {"type":"json_object"}` 和 `max_completion_tokens`，返回 `choices[0].message.content` 中的动作 JSON。接口格式参考 [OpenAI 官方文档](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)。
 2. 点击“测试已保存的模型连接”，确认连接和动作格式通过；测试不处理真实订单。需要自行承担模型调用费用。
 3. 选择自动操作范围并启用。默认巡检间隔 60 秒、每项最多调用模型 3 次；每轮最多处理 5 项。可设为 30–3600 秒、1–10 次。“请求巡检”会唤醒任务，仍遵守配置间隔。付款人提交也会唤醒任务。
-4. 关注待人工项、最近结果和运维巡检。停用自动处理会停止新的模型请求；模型等待期间关闭开关或撤销操作范围，返回的动作也不会继续执行。
+4. 关注待人工项、最近结果和“监控”页的告警。停用自动处理会停止新的模型请求；模型等待期间关闭开关或撤销操作范围，返回的动作也不会继续执行。
 
 首次升级不带模型配置，自动处理保持关闭；付款人自助及后台人工回复仍然可用。API Key 使用现有主密钥加密，后台只返回“是否已保存”，空白输入保留原值；更换接口域名时必须重新填写或清除密钥。本机测试允许 HTTP，其他地址要求 HTTPS；不跟随模型服务重定向。
 

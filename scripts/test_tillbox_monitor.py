@@ -79,6 +79,7 @@ class MonitorTest(unittest.TestCase):
                 CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
                 CREATE TABLE notifications (status TEXT);
                 CREATE TABLE assistance_cases (status TEXT);
+                CREATE TABLE telegram_chats (id INTEGER PRIMARY KEY);
             """)
             conn.execute("INSERT INTO channels VALUES (1, 'alipay_qr', '支付宝经营码', 1)")
             conn.execute("INSERT INTO channels VALUES (2, 'upstream_epay', '上游', 1)")
@@ -111,6 +112,23 @@ class MonitorTest(unittest.TestCase):
                 set(monitor.evaluate_db(query(), now)),
                 {'automation', 'automation_stale', 'assistance_manual', 'ledger_failures', 'ledger_stale'},
             )
+            # 只填了 Token、没绑定会话：Tillbox 发不出去，业务问题仍由这里发。
+            conn.execute('INSERT INTO settings VALUES (?, ?)', ('telegram', json.dumps({'token': 'sealed'})))
+            self.assertIn('ledger_failures', monitor.evaluate_db(query(), now))
+            # 绑定后改由 Tillbox 发，这里只看告警任务的心跳。
+            conn.execute('INSERT INTO telegram_chats VALUES (1)')
+            self.assertEqual(set(monitor.evaluate_db(query(), now)), {'alerting_stale'})
+            state = json.dumps({'last_run_at': now * 1000})
+            conn.execute('INSERT INTO settings VALUES (?, ?)', ('monitor_state', state))
+            self.assertEqual(monitor.evaluate_db(query(), now), {})
+
+    def test_alerting(self):
+        now = 100_000
+        ok = {'last_run_at': (now - 60) * 1000, 'sent_at': (now - 30) * 1000, 'send_error_at': (now - 90) * 1000}
+        self.assertEqual(monitor.evaluate_alerting(ok, now), {})
+        stale = {**ok, 'last_run_at': (now - 301) * 1000}
+        self.assertEqual(set(monitor.evaluate_alerting(stale, now)), {'alerting_stale'})
+        self.assertEqual(set(monitor.evaluate_alerting({**ok, 'send_error_at': now * 1000}, now)), {'alerting_send'})
 
     def test_alert_target_from_environment(self):
         with unittest.mock.patch.dict(

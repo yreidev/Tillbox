@@ -10,7 +10,7 @@ make test
 make check
 ```
 
-`make build` 先按锁文件安装并构建前端，再编译嵌入前端的 `bin/tillbox`。只执行 `go build` 不会更新前端产物。`make test` 依次跑 Go 测试、前端测试和巡检脚本的测试：Go 测试默认使用各测试自己的临时 SQLite 数据库，支付宝请求使用本地假服务器；前端用 Vitest 只测纯逻辑（金额和时间的显示、查询参数、本机付款记录的过滤），测试文件和被测代码放在一起，命名为 `*.test.ts`。`make check` 运行 Go vet 和 TypeScript 类型检查。
+`make build` 先按锁文件安装并构建前端，再编译嵌入前端的 `bin/tillbox`。只执行 `go build` 不会更新前端产物。`make test` 依次跑 Go 测试、前端测试和巡检脚本的测试：Go 测试默认使用各测试自己的临时 SQLite 数据库，支付宝请求使用本地假服务器；前端用 Vitest 只测纯逻辑（金额和时间的显示、查询参数、本机付款记录的过滤、渠道运行情况的说法），测试文件和被测代码放在一起，命名为 `*.test.ts`。`make check` 运行 Go vet 和 TypeScript 类型检查。
 
 发版前要跑 `make ci`：和 CI 相同的全部检查，包括 lint、漏洞检查、race 检测和 PostgreSQL 测试（需要 Docker，脚本临时起一个容器，跑完删掉）。各步骤见 [release.md](release.md#本机-ci)。
 

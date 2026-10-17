@@ -18,6 +18,7 @@ import { Route as AdminAssistanceRouteImport } from './routes/admin/assistance'
 import { Route as AdminChannelsRouteImport } from './routes/admin/channels'
 import { Route as AdminLedgerRouteImport } from './routes/admin/ledger'
 import { Route as AdminMerchantsRouteImport } from './routes/admin/merchants'
+import { Route as AdminMonitorRouteImport } from './routes/admin/monitor'
 import { Route as AdminNotificationsRouteImport } from './routes/admin/notifications'
 import { Route as AdminOperationsRouteImport } from './routes/admin/operations'
 import { Route as AdminOrdersRouteImport } from './routes/admin/orders'
@@ -70,6 +71,11 @@ const AdminMerchantsRoute = AdminMerchantsRouteImport.update({
   path: '/merchants',
   getParentRoute: () => AdminRouteRoute,
 } as any)
+const AdminMonitorRoute = AdminMonitorRouteImport.update({
+  id: '/monitor',
+  path: '/monitor',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
 const AdminNotificationsRoute = AdminNotificationsRouteImport.update({
   id: '/notifications',
   path: '/notifications',
@@ -110,6 +116,7 @@ export interface FileRoutesByFullPath {
   '/admin/channels': typeof AdminChannelsRoute
   '/admin/ledger': typeof AdminLedgerRoute
   '/admin/merchants': typeof AdminMerchantsRoute
+  '/admin/monitor': typeof AdminMonitorRoute
   '/admin/notifications': typeof AdminNotificationsRoute
   '/admin/operations': typeof AdminOperationsRoute
   '/admin/orders': typeof AdminOrdersRoute
@@ -126,6 +133,7 @@ export interface FileRoutesByTo {
   '/admin/channels': typeof AdminChannelsRoute
   '/admin/ledger': typeof AdminLedgerRoute
   '/admin/merchants': typeof AdminMerchantsRoute
+  '/admin/monitor': typeof AdminMonitorRoute
   '/admin/notifications': typeof AdminNotificationsRoute
   '/admin/operations': typeof AdminOperationsRoute
   '/admin/orders': typeof AdminOrdersRoute
@@ -144,6 +152,7 @@ export interface FileRoutesById {
   '/admin/channels': typeof AdminChannelsRoute
   '/admin/ledger': typeof AdminLedgerRoute
   '/admin/merchants': typeof AdminMerchantsRoute
+  '/admin/monitor': typeof AdminMonitorRoute
   '/admin/notifications': typeof AdminNotificationsRoute
   '/admin/operations': typeof AdminOperationsRoute
   '/admin/orders': typeof AdminOrdersRoute
@@ -163,6 +172,7 @@ export interface FileRouteTypes {
     | '/admin/channels'
     | '/admin/ledger'
     | '/admin/merchants'
+    | '/admin/monitor'
     | '/admin/notifications'
     | '/admin/operations'
     | '/admin/orders'
@@ -179,6 +189,7 @@ export interface FileRouteTypes {
     | '/admin/channels'
     | '/admin/ledger'
     | '/admin/merchants'
+    | '/admin/monitor'
     | '/admin/notifications'
     | '/admin/operations'
     | '/admin/orders'
@@ -196,6 +207,7 @@ export interface FileRouteTypes {
     | '/admin/channels'
     | '/admin/ledger'
     | '/admin/merchants'
+    | '/admin/monitor'
     | '/admin/notifications'
     | '/admin/operations'
     | '/admin/orders'
@@ -278,6 +290,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminMerchantsRouteImport
       parentRoute: typeof AdminRouteRoute
     }
+    '/admin/monitor': {
+      id: '/admin/monitor'
+      path: '/monitor'
+      fullPath: '/admin/monitor'
+      preLoaderRoute: typeof AdminMonitorRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
     '/admin/notifications': {
       id: '/admin/notifications'
       path: '/notifications'
@@ -328,6 +347,7 @@ interface AdminRouteRouteChildren {
   AdminChannelsRoute: typeof AdminChannelsRoute
   AdminLedgerRoute: typeof AdminLedgerRoute
   AdminMerchantsRoute: typeof AdminMerchantsRoute
+  AdminMonitorRoute: typeof AdminMonitorRoute
   AdminNotificationsRoute: typeof AdminNotificationsRoute
   AdminOperationsRoute: typeof AdminOperationsRoute
   AdminOrdersRoute: typeof AdminOrdersRoute
@@ -341,6 +361,7 @@ const AdminRouteRouteChildren: AdminRouteRouteChildren = {
   AdminChannelsRoute: AdminChannelsRoute,
   AdminLedgerRoute: AdminLedgerRoute,
   AdminMerchantsRoute: AdminMerchantsRoute,
+  AdminMonitorRoute: AdminMonitorRoute,
   AdminNotificationsRoute: AdminNotificationsRoute,
   AdminOperationsRoute: AdminOperationsRoute,
   AdminOrdersRoute: AdminOrdersRoute,

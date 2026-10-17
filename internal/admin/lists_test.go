@@ -35,7 +35,9 @@ func TestEmptyListsAreArrays(t *testing.T) {
 		{"/web-api/admin/audit", []string{"items"}},
 		{"/web-api/admin/assistance?status=closed", []string{"items"}},
 		{"/web-api/admin/assistance/cases/" + strconv.FormatInt(c.ID, 10), []string{"actions"}},
-		{"/web-api/admin/operations", []string{"issues", "archives"}},
+		{"/web-api/admin/operations", []string{"archives"}},
+		{"/web-api/admin/monitor", []string{"alerts", "resolved", "channels"}},
+		{"/web-api/admin/monitor/trends?range=7d", []string{"buckets"}},
 	} {
 		r := a.Call("GET", tc.path, nil)
 		expect(t, r, 200, "")

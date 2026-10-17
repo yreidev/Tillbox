@@ -14,6 +14,7 @@ import (
 	"tillbox/internal/ledger"
 	"tillbox/internal/maintenance"
 	"tillbox/internal/merchant"
+	"tillbox/internal/monitor"
 	"tillbox/internal/notify"
 	"tillbox/internal/order"
 	"tillbox/internal/settings"
@@ -35,6 +36,7 @@ type API struct {
 	Signer      *notify.Signer
 	Maintenance *maintenance.Service
 	Settings    *settings.Service
+	Monitor     *monitor.Service
 	// ClientIP 返回请求方的真实 IP。
 	ClientIP func(r *http.Request) string
 	// Secure 判断请求是不是经由 HTTPS 进来的（决定 cookie 的 Secure 标记）。
@@ -52,6 +54,15 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /web-api/admin/assistance/run", a.wrap(a.runAssistance))
 	mux.HandleFunc("GET /web-api/admin/assistance/cases/{id}", a.wrap(a.assistanceDetail))
 	mux.HandleFunc("POST /web-api/admin/assistance/cases/{id}", a.wrap(a.updateAssistance))
+	mux.HandleFunc("GET /web-api/admin/monitor", a.wrap(a.monitorPage))
+	mux.HandleFunc("POST /web-api/admin/monitor/check", a.wrap(a.checkNow))
+	mux.HandleFunc("GET /web-api/admin/monitor/trends", a.wrap(a.trends))
+	mux.HandleFunc("PUT /web-api/admin/monitor/telegram", a.wrap(a.saveTelegram))
+	mux.HandleFunc("DELETE /web-api/admin/monitor/telegram", a.wrap(a.clearTelegram))
+	mux.HandleFunc("POST /web-api/admin/monitor/telegram/bind", a.wrap(a.bindTelegram))
+	mux.HandleFunc("DELETE /web-api/admin/monitor/telegram/bind", a.wrap(a.cancelBindTelegram))
+	mux.HandleFunc("POST /web-api/admin/monitor/telegram/test", a.wrap(a.testTelegram))
+	mux.HandleFunc("DELETE /web-api/admin/monitor/telegram/chats/{id}", a.wrap(a.unbindTelegram))
 	mux.HandleFunc("GET /web-api/admin/operations", a.wrap(a.operations))
 	mux.HandleFunc("PUT /web-api/admin/operations/retention", a.wrap(a.saveRetention))
 	mux.HandleFunc("POST /web-api/admin/operations/archive", a.wrap(a.runArchive))

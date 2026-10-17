@@ -25,3 +25,14 @@ export function relative(ms: number, now = Date.now()): string {
   else s = `${Math.round(abs / 86400)} 天`
   return d >= 0 ? `${s}后` : `${s}前`
 }
+
+// duration 把时长（毫秒）写成“5 分钟”“2 小时 5 分钟”“1 天 3 小时”。
+export function duration(ms: number): string {
+  const m = Math.max(0, Math.floor(ms / 60_000))
+  if (m < 1) return '不到 1 分钟'
+  if (m < 60) return `${m} 分钟`
+  const h = Math.floor(m / 60)
+  if (h < 24) return m % 60 ? `${h} 小时 ${m % 60} 分钟` : `${h} 小时`
+  const d = Math.floor(h / 24)
+  return h % 24 ? `${d} 天 ${h % 24} 小时` : `${d} 天`
+}

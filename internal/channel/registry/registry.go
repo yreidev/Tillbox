@@ -333,7 +333,9 @@ func (r *Registry) Delete(ctx context.Context, id int64) error {
 		if _, err := tx.NewDelete().Model((*store.Channel)(nil)).Where("id = ?", id).Exec(ctx); err != nil {
 			return err
 		}
-		_, err := tx.NewDelete().Model((*store.Setting)(nil)).Where("key = ?", "ledger_state:"+key).Exec(ctx)
+		// 查账进度和上游渠道状态（键名见 ledger.Poller 和 confirm.Service）
+		_, err := tx.NewDelete().Model((*store.Setting)(nil)).
+			Where("key IN (?)", bun.List([]string{"ledger_state:" + key, "confirm_state:" + key})).Exec(ctx)
 		return err
 	})
 	if err != nil {
