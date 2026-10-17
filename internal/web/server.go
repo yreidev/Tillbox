@@ -2,14 +2,11 @@
 package web
 
 import (
-	"bytes"
 	"context"
-	"errors"
 	"io/fs"
 	"net"
 	"net/http"
 	"net/netip"
-	"path"
 	"strings"
 	"time"
 
@@ -149,11 +146,13 @@ func Handler(d Deps) http.Handler {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = w.Write([]byte("ok"))
 	})
-	mux.HandleFunc("/web-api/", func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, `{"error":"接口不存在"}`, http.StatusNotFound)
-	})
-	mux.Handle("/", spa(d.UI))
-	return headers(mux)
+	mux.HandleFunc("/web-api/", func(w http.ResponseWriter, r *http.Request) { apiNotFound(w) })
+	mux.Handle("/", spa(d.UI, d.Settings))
+	return headers(entryGate(mux, d.Settings, d.Admin.Secure))
+}
+
+func apiNotFound(w http.ResponseWriter) {
+	http.Error(w, `{"error":"接口不存在"}`, http.StatusNotFound)
 }
 
 func headers(next http.Handler) http.Handler {
@@ -162,49 +161,5 @@ func headers(next http.Handler) http.Handler {
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		next.ServeHTTP(w, r)
-	})
-}
-
-const notBuilt = `<!doctype html><meta charset="utf-8"><title>Tillbox</title><p>前端还没有构建。先在 web/ 目录运行 pnpm install && pnpm build，再重新编译。</p>`
-
-// spa 提供前端文件；找不到的路径回退到 index.html，由前端路由处理。
-func spa(ui fs.FS) http.Handler {
-	index, err := fs.ReadFile(ui, "index.html")
-	if err != nil {
-		index = nil
-	}
-	files := http.FileServerFS(ui)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		p := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
-		if p != "" && p != "index.html" {
-			if st, err := fs.Stat(ui, p); err == nil && !st.IsDir() {
-				if strings.HasPrefix(p, "assets/") {
-					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-				}
-				files.ServeHTTP(w, r)
-				return
-			} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			if strings.HasPrefix(p, "assets/") || path.Ext(p) != "" {
-				http.NotFound(w, r)
-				return
-			}
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-cache")
-		if strings.HasPrefix(p, "admin") || p == "login" {
-			w.Header().Set("X-Frame-Options", "DENY")
-		}
-		if index == nil {
-			_, _ = w.Write([]byte(notBuilt))
-			return
-		}
-		http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(index))
 	})
 }

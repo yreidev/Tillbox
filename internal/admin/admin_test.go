@@ -602,6 +602,117 @@ func TestSettingsAPI(t *testing.T) {
 	}
 }
 
+func TestHomeAndEntry(t *testing.T) {
+	e := apptest.New(t)
+	a := e.Login()
+	type view struct {
+		Home  settings.Home `json:"home"`
+		Entry struct {
+			Enabled bool   `json:"enabled"`
+			URL     string `json:"url"`
+		} `json:"entry"`
+	}
+	v := decode[view](t, a.Call("GET", "/web-api/admin/settings", nil))
+	if v.Home.Mode != settings.HomeHelp || v.Entry.Enabled || v.Entry.URL != "" {
+		t.Fatalf("默认首页是付款人自助、安全入口关着：%+v", v)
+	}
+
+	// 首页
+	for _, c := range []struct {
+		home settings.Home
+		want string
+	}{
+		{settings.Home{Mode: "blog"}, "不认识"},
+		{settings.Home{Mode: settings.HomePage, HTML: " \n"}, "HTML"},
+		{settings.Home{Mode: settings.HomePage, HTML: strings.Repeat("x", settings.MaxHomeHTML+1)}, "512 KB"},
+		{settings.Home{Mode: settings.HomeRedirect, URL: "ftp://example.com"}, "完整网址"},
+		{settings.Home{Mode: settings.HomeRedirect, URL: "/help"}, "完整网址"},
+		{settings.Home{Mode: settings.HomeRedirect, URL: e.URL + "/"}, "首页自己"},
+	} {
+		expect(t, a.Call("PUT", "/web-api/admin/settings/home", c.home), http.StatusBadRequest, c.want)
+	}
+	page := "<!doctype html><title>小林的工作室</title><h1>欢迎</h1>"
+	expect(t, a.Call("PUT", "/web-api/admin/settings/home", settings.Home{Mode: settings.HomePage, HTML: page, URL: " https://example.com "}), http.StatusOK, "")
+	if r := e.Get("/"); r.Status != 200 || string(r.Body) != page || !strings.HasPrefix(r.Header.Get("Content-Security-Policy"), "sandbox") {
+		t.Fatalf("自定义首页：%d %v %s", r.Status, r.Header, r.Body)
+	}
+	// 切到跳转时 HTML 留着，换回来不用重贴
+	expect(t, a.Call("PUT", "/web-api/admin/settings/home", settings.Home{Mode: settings.HomeRedirect, HTML: page, URL: "https://example.com"}), http.StatusOK, "")
+	if r := e.Get("/"); r.Status != http.StatusFound || r.Header.Get("Location") != "https://example.com" {
+		t.Fatalf("跳转：%d %v", r.Status, r.Header)
+	}
+	if v := decode[view](t, a.Call("GET", "/web-api/admin/settings", nil)); v.Home.HTML != page || v.Home.URL != "https://example.com" {
+		t.Fatalf("切换方式后另外两项要保留：%+v", v.Home)
+	}
+	expect(t, a.Call("PUT", "/web-api/admin/settings/home", settings.Home{Mode: settings.HomeNotFound}), http.StatusOK, "")
+	if r := e.Get("/"); r.Status != 404 {
+		t.Fatalf("首页 404：%d", r.Status)
+	}
+	if r := e.Get("/no-such-page"); r.Status != 404 {
+		t.Fatalf("不存在的路径：%d", r.Status)
+	}
+
+	// 安全入口：开启时当前浏览器顺带放行
+	res := a.Call("POST", "/web-api/admin/settings/entry", nil)
+	expect(t, res, http.StatusOK, "")
+	on := decode[view](t, res).Entry
+	if !on.Enabled || !strings.HasPrefix(on.URL, e.URL+"/admin?entry=") || !strings.Contains(res.Header.Get("Set-Cookie"), admin.EntryCookie+"=") {
+		t.Fatalf("开启安全入口：%+v %v", on, res.Header)
+	}
+	expect(t, a.Call("GET", "/web-api/admin/settings", nil), http.StatusOK, "")
+	// 别的浏览器看不到后台，也试不了密码
+	for _, p := range []string{"/login", "/admin", "/admin/orders"} {
+		if r := e.Get(p); r.Status != 404 || string(r.Body) != "404 page not found\n" {
+			t.Errorf("%s 没入口应 404：%d %s", p, r.Status, r.Body)
+		}
+	}
+	expect(t, raw(e, "POST", "/web-api/auth/login", `{"password":"x"}`, map[string]string{"X-Tillbox": "1"}), http.StatusNotFound, "接口不存在")
+	expect(t, e.Get("/web-api/admin/settings"), http.StatusNotFound, "接口不存在")
+	// 收银台、付款人自助不受影响
+	if r := e.Get("/help"); r.Status != 200 {
+		t.Errorf("付款人自助：%d", r.Status)
+	}
+	// 打开入口链接后放行
+	link, _ := url.Parse(on.URL)
+	r := e.Get(link.RequestURI())
+	if r.Status != http.StatusSeeOther || r.Header.Get("Location") != "/admin" {
+		t.Fatalf("入口链接：%d %v", r.Status, r.Header)
+	}
+	cookie := r.Header.Get("Set-Cookie")
+	cookie = cookie[:strings.Index(cookie, ";")]
+	expect(t, raw(e, "POST", "/web-api/auth/login", `{"password":"x"}`, map[string]string{"X-Tillbox": "1", "Cookie": cookie}), http.StatusUnauthorized, "密码不对")
+
+	// 换链接：旧的入口 cookie 失效，当前浏览器拿到新的
+	again := decode[view](t, a.Call("POST", "/web-api/admin/settings/entry", nil)).Entry
+	if again.URL == on.URL {
+		t.Fatal("换链接后应是新的")
+	}
+	expect(t, raw(e, "GET", "/web-api/auth/me", "", map[string]string{"Cookie": cookie}), http.StatusNotFound, "")
+	expect(t, a.Call("GET", "/web-api/admin/settings", nil), http.StatusOK, "")
+
+	// 命令行直接改库也马上生效（不走缓存）
+	other := settings.New(e.DB(), e.App.Settings.Box())
+	if _, err := other.ResetEntry(e.Ctx); err != nil {
+		t.Fatal(err)
+	}
+	expect(t, a.Call("GET", "/web-api/admin/settings", nil), http.StatusNotFound, "")
+	if err := other.DisableEntry(e.Ctx); err != nil {
+		t.Fatal(err)
+	}
+	expect(t, a.Call("GET", "/web-api/admin/settings", nil), http.StatusOK, "")
+
+	expect(t, a.Call("POST", "/web-api/admin/settings/entry", nil), http.StatusOK, "")
+	expect(t, a.Call("DELETE", "/web-api/admin/settings/entry", nil), http.StatusOK, "")
+	if r := e.Get("/login"); r.Status != 200 {
+		t.Errorf("关闭后登录页恢复：%d", r.Status)
+	}
+	for _, want := range []string{"settings.home", "settings.entry", "settings.entry_off"} {
+		if !hasAudit(t, e, want) {
+			t.Errorf("没有审计记录 %s", want)
+		}
+	}
+}
+
 func TestOverview(t *testing.T) {
 	e := apptest.New(t)
 	a := e.Login()

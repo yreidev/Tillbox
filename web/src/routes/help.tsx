@@ -10,7 +10,7 @@ import {
   Clock,
   TriangleExclamation,
 } from '@gravity-ui/icons'
-import { Logo } from '../components/brand'
+import { Logo, siteName } from '../components/brand'
 import { api } from '../lib/api'
 import { time } from '../lib/format'
 import {
@@ -203,7 +203,7 @@ function HelpPage() {
             className="flex min-w-0 items-center gap-2.5 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-focus"
           >
             <Logo size={28} />
-            <span className="font-semibold">Tillbox</span>
+            <span className="font-semibold">{siteName()}</span>
             <span className="h-4 w-px bg-separator" aria-hidden />
             <span className="truncate text-sm text-muted">付款支持</span>
           </a>

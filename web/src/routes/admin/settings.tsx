@@ -1,16 +1,19 @@
-import { useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Form } from '@heroui/react'
-import { Copy } from '@gravity-ui/icons'
+import { ArrowsRotateRight, ArrowUpRightFromSquare, Copy, Eye, Shield } from '@gravity-ui/icons'
 import { TelegramSettings } from '../../components/telegram-settings'
 import { api, query } from '../../lib/api'
 import { time } from '../../lib/format'
-import type { AuditLog, Page, Payment, Settings } from '../../lib/types'
+import type { AuditLog, Home, HomeMode, Page, Payment, Settings } from '../../lib/types'
 import {
+  Code,
   ConfirmDialog,
   copyText,
+  cx,
   DataTable,
+  Dialog,
   FilterTabs,
   Loading,
   Notice,
@@ -18,11 +21,14 @@ import {
   PageHeader,
   Panel,
   Pill,
+  RadioInput,
   SettingsRow,
   Stack,
+  TextAreaInput,
   TextInput,
   toastError,
   toastOK,
+  type Option,
   type Tone,
 } from '../../lib/ui'
 
@@ -53,7 +59,7 @@ function SettingsPage() {
   const body = (render: (s: Settings) => ReactNode) => (q.data ? render(q.data) : q.isPending ? <Loading /> : null)
   return (
     <div className="flex flex-col gap-4">
-      <PageHeader description="收款节奏、对接用的平台密钥、站点名称、发给管理员的 Telegram 通知，以及所有管理操作的记录。" />
+      <PageHeader description="收款节奏、对接用的平台密钥、站点名称和首页、发给管理员的 Telegram 通知，以及所有管理操作的记录。" />
       {q.isError && <Notice status="danger">{q.error.message}</Notice>}
       <FilterTabs<Tab>
         ariaLabel="设置分类"
@@ -63,7 +69,14 @@ function SettingsPage() {
       >
         {tab === 'payment' && body((s) => <PaymentForm s={s} />)}
         {tab === 'platform' && body((s) => <Platform s={s} />)}
-        {tab === 'site' && body((s) => <SiteForm s={s} />)}
+        {tab === 'site' &&
+          body((s) => (
+            <>
+              <SiteForm s={s} />
+              <HomeForm s={s} />
+              <EntryPanel s={s} />
+            </>
+          ))}
         {tab === 'notify' && <TelegramSettings />}
         {tab === 'audit' && <Audit />}
       </FilterTabs>
@@ -326,7 +339,10 @@ function SiteForm({ s }: { s: Settings }) {
           save.mutate()
         }}
       >
-        <SettingsRow label="站点名称" description="显示在后台左上角、浏览器标签和收银台标题上。">
+        <SettingsRow
+          label="站点名称"
+          description="显示在后台左上角、登录页、浏览器标签、收银台标题上，也是添加到桌面时的应用名。"
+        >
           <TextInput
             ariaLabel="站点名称"
             isRequired
@@ -342,6 +358,256 @@ function SiteForm({ s }: { s: Settings }) {
           </div>
         </SettingsRow>
       </Form>
+    </Panel>
+  )
+}
+
+// 和 internal/settings/home.go 的 MaxHomeHTML 一致。
+const maxHomeHTML = 512 * 1024
+
+const homeOptions: Option<HomeMode>[] = [
+  { value: 'help', label: '付款人自助页', description: '默认。付款人在这里查订单、提交申诉。' },
+  { value: 'page', label: '自定义页面', description: '贴一整段 HTML，打开域名就显示它。' },
+  { value: 'redirect', label: '跳转到其他网址', description: '打开域名直接跳到你填的网址。' },
+  { value: 'not_found', label: '404', description: '和不存在的路径一样，只返回“404 page not found”。' },
+]
+
+const kb = (n: number) => `${(n / 1024).toFixed(n < 10240 ? 1 : 0)} KB`
+
+function HomeForm({ s }: { s: Settings }) {
+  const qc = useQueryClient()
+  const [v, setV] = useState<Home>(s.home)
+  const [preview, setPreview] = useState(false)
+  const size = useMemo(() => new TextEncoder().encode(v.html).length, [v.html])
+  const dirty = v.mode !== s.home.mode || v.html !== s.home.html || v.url.trim() !== s.home.url
+  const set = (x: Partial<Home>) => setV((o) => ({ ...o, ...x }))
+  const save = useMutation({
+    mutationFn: () => api.put('/web-api/admin/settings/home', v),
+    onSuccess: async () => {
+      toastOK('已保存，首页立即生效')
+      await qc.invalidateQueries({ queryKey: ['settings'] })
+    },
+    onError: toastError,
+  })
+  return (
+    <Panel
+      title="首页"
+      description="直接打开域名时看到的页面。收银台、付款人自助页（/help）、易支付接口和后台都不受影响。"
+      extra={
+        <Button size="sm" variant="ghost" onPress={() => window.open('/', '_blank', 'noopener,noreferrer')}>
+          <ArrowUpRightFromSquare />
+          打开首页
+        </Button>
+      }
+    >
+      <Form
+        className="flex flex-col"
+        onSubmit={(e) => {
+          e.preventDefault()
+          save.mutate()
+        }}
+      >
+        <div className="divide-y divide-separator">
+          <SettingsRow label="显示" description="切换后，另外几项填过的内容会保留，换回来不用重填。">
+            <RadioInput ariaLabel="首页显示" value={v.mode} onChange={(mode) => set({ mode })} options={homeOptions} />
+          </SettingsRow>
+          {v.mode === 'page' && (
+            <SettingsRow
+              label="页面 HTML"
+              description="原样返回给浏览器，最多 512 KB。图片、样式可以写在页面里或用外部链接。页面里的脚本在隔离环境中运行，读不到本站的 cookie 和本地存储，也调不了后台接口。"
+            >
+              <TextAreaInput
+                ariaLabel="页面 HTML"
+                isRequired
+                mono
+                rows={14}
+                value={v.html}
+                onChange={(html) => set({ html })}
+                placeholder="<!doctype html>"
+                validate={(x) =>
+                  !x.trim() ? '请填写' : new TextEncoder().encode(x).length > maxHomeHTML ? '超过 512 KB' : null
+                }
+                description={
+                  <span className={cx('tb-num', size > maxHomeHTML && 'text-danger')}>{kb(size)} / 512 KB</span>
+                }
+              />
+              <div>
+                <Button size="sm" variant="secondary" isDisabled={!v.html.trim()} onPress={() => setPreview(true)}>
+                  <Eye />
+                  预览
+                </Button>
+              </div>
+            </SettingsRow>
+          )}
+          {v.mode === 'redirect' && (
+            <SettingsRow label="跳转网址" description="用临时跳转（302），浏览器不会记住，改回别的首页后立即生效。">
+              <TextInput
+                ariaLabel="跳转网址"
+                isRequired
+                mono
+                type="url"
+                inputMode="url"
+                maxLength={2048}
+                placeholder="https://example.com"
+                value={v.url}
+                onChange={(url) => set({ url })}
+                validate={(x) =>
+                  /^https?:\/\/[^/\s]+/i.test(x.trim()) ? null : '要是 http:// 或 https:// 开头的完整网址'
+                }
+              />
+            </SettingsRow>
+          )}
+        </div>
+        <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-separator pt-4">
+          <span className="me-auto text-sm text-muted">{dirty ? '有未保存的修改。' : '保存后立即生效。'}</span>
+          <Button size="sm" variant="tertiary" isDisabled={!dirty} onPress={() => setV(s.home)}>
+            撤销修改
+          </Button>
+          <Button size="sm" type="submit" isDisabled={!dirty} isPending={save.isPending}>
+            保存
+          </Button>
+        </div>
+      </Form>
+      <Dialog title="预览自定义首页" size="lg" open={preview} onClose={() => setPreview(false)}>
+        <iframe
+          title="自定义首页预览"
+          sandbox="allow-scripts allow-forms allow-popups allow-modals"
+          srcDoc={v.html}
+          className="h-[65svh] w-full rounded-xl border border-separator bg-white"
+        />
+      </Dialog>
+    </Panel>
+  )
+}
+
+type EntryAction = 'on' | 'reset' | 'off'
+
+const entryConfirm: Record<
+  EntryAction,
+  { title: string; ok: string; status: 'warning' | 'danger'; body: ReactNode; done: string }
+> = {
+  on: {
+    title: '开启后台安全入口？',
+    ok: '开启',
+    status: 'warning',
+    body: (
+      <p>
+        当前浏览器自动放行。其他设备和浏览器要先打开入口链接才看得到登录页，请把链接存进密码管理器。忘了也能在服务器上运行{' '}
+        <Code>tillbox entry</Code> 找回。
+      </p>
+    ),
+    done: '已开启，请把入口链接存好',
+  },
+  reset: {
+    title: '换一个入口链接？',
+    ok: '换一个',
+    status: 'warning',
+    body: <p>旧链接立即失效，已经放行的其他浏览器也要重新打开新链接。当前浏览器自动放行。</p>,
+    done: '已换成新的入口链接，旧链接失效',
+  },
+  off: {
+    title: '关闭后台安全入口？',
+    ok: '关闭',
+    status: 'danger',
+    body: <p>关闭后，任何人都能打开登录页和后台接口（仍然要密码才能登录）。</p>,
+    done: '已关闭后台安全入口',
+  },
+}
+
+function EntryPanel({ s }: { s: Settings }) {
+  const qc = useQueryClient()
+  // 关闭动画期间对话框里的文字还要在，所以记着上一次的操作，另用 open 控制显示
+  const [action, setAction] = useState<EntryAction>('on')
+  const [open, setOpen] = useState(false)
+  const ask = (a: EntryAction) => {
+    setAction(a)
+    setOpen(true)
+  }
+  const e = s.entry
+  const c = entryConfirm[action]
+  return (
+    <Panel
+      title="后台安全入口"
+      description="开启后，只有打开过入口链接的浏览器才看得到后台和登录页；其他人访问后台、登录页和后台接口，得到的和不存在的路径一样是 404。"
+    >
+      {e.enabled ? (
+        <div className="divide-y divide-separator">
+          <SettingsRow
+            label="入口链接"
+            description="在新设备或新浏览器上先打开一次，这个浏览器之后 400 天内不用再开。请存进密码管理器，不要发给别人。"
+          >
+            <TextInput
+              ariaLabel="入口链接"
+              isReadOnly
+              mono
+              value={e.url}
+              onChange={() => {}}
+              suffix={
+                <Button
+                  isIconOnly
+                  size="sm"
+                  variant="ghost"
+                  aria-label="复制入口链接"
+                  onPress={() => void copyText(e.url)}
+                >
+                  <Copy />
+                </Button>
+              }
+            />
+            <div className="flex flex-col gap-1 text-xs text-muted">
+              <p>
+                忘了链接：在服务器上运行 <Code>tillbox entry</Code> 查看。
+              </p>
+              <p>
+                从 Telegram 通知的按钮打开后台看到 404：Telegram 自带的浏览器也要打开一次入口链接，或者让 Telegram
+                用系统浏览器打开链接。
+              </p>
+            </div>
+          </SettingsRow>
+          <SettingsRow label="换一个链接" description="链接泄露时用。旧链接和已经放行的浏览器全部失效。">
+            <div>
+              <Button variant="secondary" onPress={() => ask('reset')}>
+                <ArrowsRotateRight />
+                换一个链接
+              </Button>
+            </div>
+          </SettingsRow>
+          <SettingsRow label="关闭安全入口" description="关闭后任何人都能打开登录页。">
+            <div>
+              <Button variant="danger-soft" onPress={() => ask('off')}>
+                关闭
+              </Button>
+            </div>
+          </SettingsRow>
+        </div>
+      ) : (
+        <SettingsRow
+          label="未开启"
+          description="现在任何人都能打开登录页。开启后当前浏览器自动放行，别的设备要先打开入口链接。"
+        >
+          <div>
+            <Button onPress={() => ask('on')}>
+              <Shield />
+              开启
+            </Button>
+          </div>
+        </SettingsRow>
+      )}
+      <ConfirmDialog
+        open={open}
+        onClose={() => setOpen(false)}
+        title={c.title}
+        okText={c.ok}
+        status={c.status}
+        onConfirm={async () => {
+          if (action === 'off') await api.del('/web-api/admin/settings/entry')
+          else await api.post('/web-api/admin/settings/entry')
+          toastOK(c.done)
+          await qc.invalidateQueries({ queryKey: ['settings'] })
+        }}
+      >
+        {c.body}
+      </ConfirmDialog>
     </Panel>
   )
 }
@@ -362,6 +628,9 @@ const actionText: Record<string, string> = {
   'notify.resend': '重发通知',
   'settings.payment': '修改收款参数',
   'settings.platform_regenerate': '重新生成平台密钥',
+  'settings.home': '修改首页',
+  'settings.entry': '后台安全入口',
+  'settings.entry_off': '关闭后台安全入口',
   'channel.create': '新建渠道',
   'channel.update': '修改渠道',
   'channel.delete': '删除渠道',
@@ -380,10 +649,10 @@ const actionText: Record<string, string> = {
   'telegram.unbind': '解绑 Telegram 接收人',
 }
 
-// 删除、重置、撤销这类改变资金或凭据的操作标红，查看密钥标黄，方便扫一眼找出敏感操作。
+// 删除、重置、撤销这类改变资金或凭据的操作标红，查看密钥、改后台入口标黄，方便扫一眼找出敏感操作。
 function actionTone(a: string): Tone {
-  if (/delete|reset|regenerate|unlink|unbind|clear|keypair/.test(a)) return 'danger'
-  if (/view_key|download|link|close/.test(a)) return 'warning'
+  if (/delete|reset|regenerate|unlink|unbind|clear|keypair|entry_off/.test(a)) return 'danger'
+  if (/view_key|download|link|close|entry/.test(a)) return 'warning'
   return 'default'
 }
 

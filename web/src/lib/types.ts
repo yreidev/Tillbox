@@ -206,8 +206,19 @@ export interface Settings {
   defaults: Payment
   platform_public_key: string
   site: { name: string }
+  home: Home
+  entry: { enabled: boolean; url: string }
   demo: boolean
 }
+
+/** 首页设置：直接打开域名时显示什么。和 internal/settings/home.go 一致。 */
+export interface Home {
+  mode: HomeMode
+  html: string
+  url: string
+}
+
+export type HomeMode = 'help' | 'page' | 'redirect' | 'not_found'
 
 export type ChannelType = 'alipay_qr' | 'epay' | 'demo'
 

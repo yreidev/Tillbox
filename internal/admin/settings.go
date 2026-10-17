@@ -22,10 +22,20 @@ func (a *API) getSettings(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	home, err := a.Settings.Home(ctx)
+	if err != nil {
+		return err
+	}
+	entry, err := a.entryView(r)
+	if err != nil {
+		return err
+	}
 	ok(w, map[string]any{
 		"payment":             pay,
 		"platform_public_key": plat.PublicKey,
 		"site":                site,
+		"home":                home,
+		"entry":               entry,
 		"demo":                a.Demo,
 		"defaults":            settings.DefaultPayment(),
 	})

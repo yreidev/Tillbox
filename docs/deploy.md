@@ -125,6 +125,8 @@ docker compose exec tillbox tillbox reset-password
 
 二进制部署使用相同的数据目录、数据库和主密钥环境变量执行 `./bin/tillbox reset-password`。新密码打印到终端，所有旧登录会话立即失效。命令没有用户名参数。
 
+开了后台安全入口又找不到入口链接时，运行 `tillbox entry` 查看，`tillbox entry reset` 换一个，`tillbox entry off` 关闭，说明见 [operations.md](operations.md#首页和后台安全入口)。
+
 ## 8. 备份、恢复和升级
 
 目前没有自动备份任务，需由运维安排。最直接的 SQLite 备份方式是停服务后备份整个数据目录（含 `master.key`，以及可能存在的 `tillbox.db-wal`、`tillbox.db-shm`），完成后再启动；不要运行中只复制 `.db` 文件。PostgreSQL 使用数据库的一致性备份工具，并单独备份主密钥。若主密钥来自环境变量，备份同一个值。

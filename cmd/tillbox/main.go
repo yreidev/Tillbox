@@ -18,6 +18,7 @@ import (
 	"tillbox/internal/app"
 	"tillbox/internal/config"
 	"tillbox/internal/secret"
+	"tillbox/internal/settings"
 	"tillbox/internal/store"
 	"tillbox/internal/webui"
 )
@@ -29,6 +30,9 @@ var revision = "dev"
 const usage = `用法：
   tillbox [serve]                 启动服务
   tillbox reset-password          重置管理员密码，新密码打印到终端
+  tillbox entry                   显示后台安全入口链接
+  tillbox entry reset             换一个后台安全入口链接（没开时开启），旧链接失效
+  tillbox entry off               关闭后台安全入口
   tillbox version                 显示版本
 
 配置全部走环境变量，见 docs/deploy.md。`
@@ -44,6 +48,8 @@ func main() {
 		err = serve()
 	case "reset-password":
 		err = resetPassword()
+	case "entry":
+		err = entry(os.Args[2:])
 	case "version", "-v", "--version":
 		fmt.Println("tillbox", version, revision)
 	case "help", "-h", "--help":
@@ -99,6 +105,60 @@ func resetPassword() error {
 		return err
 	}
 	fmt.Printf("已重置管理员密码：%s\n所有登录会话已失效。\n", pw)
+	return nil
+}
+
+// entry 在服务器上找回、换掉或关闭后台安全入口，运行中的服务马上生效。
+func entry(args []string) error {
+	sub := ""
+	if len(args) > 0 {
+		sub = args[0]
+	}
+	if len(args) > 1 || (sub != "" && sub != "reset" && sub != "off") {
+		fmt.Fprintln(os.Stderr, usage)
+		os.Exit(2)
+	}
+	ctx := context.Background()
+	cfg, db, box, err := open(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	st := settings.New(db, box)
+	e, err := st.Entry(ctx)
+	if err != nil {
+		return err
+	}
+	switch sub {
+	case "reset":
+		detail := "开启了后台安全入口"
+		if e.Key != "" {
+			detail = "换了后台安全入口链接，旧链接失效"
+		}
+		if e, err = st.ResetEntry(ctx); err != nil {
+			return err
+		}
+		_ = store.Audit(ctx, db, "命令行", "settings.entry", "", detail)
+	case "off":
+		if e.Key == "" {
+			break
+		}
+		if err := st.DisableEntry(ctx); err != nil {
+			return err
+		}
+		_ = store.Audit(ctx, db, "命令行", "settings.entry_off", "", "关闭了后台安全入口")
+		fmt.Println("已关闭后台安全入口，后台和登录页恢复直接访问。")
+		return nil
+	}
+	if e.Key == "" {
+		fmt.Println("没有开启后台安全入口，后台和登录页可以直接访问。")
+		return nil
+	}
+	base := cfg.PublicURL
+	if base == "" {
+		base = "https://<你的域名>"
+	}
+	fmt.Printf("后台安全入口：%s\n", admin.EntryURL(base, e.Key))
 	return nil
 }
 

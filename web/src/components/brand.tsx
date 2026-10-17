@@ -1,3 +1,8 @@
+/** siteName 是“设置 → 站点”里的站点名。后端返回页面时写进了应用名，登录前的页面也能用。 */
+export function siteName() {
+  return document.querySelector<HTMLMetaElement>('meta[name="application-name"]')?.content || 'Tillbox'
+}
+
 // 标志“小票加对勾”：主色圆角方块上一张白色收据，中间一个对勾，意思是“已收款”。和 web/icons/tillbox.svg 是同一个图形。
 export function Logo({ size = 28, title }: { size?: number; title?: string }) {
   return (
