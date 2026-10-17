@@ -27,8 +27,8 @@ jobs:
         with: { package_json_file: web/package.json }
       - uses: actions/setup-node@v7
         with: { node-version: '24', cache: pnpm, cache-dependency-path: web/pnpm-lock.yaml }
-      # ruff 用 uv 装，装在 ~/.local/bin
-      - uses: astral-sh/setup-uv@v10
+      # ruff 用 uv 装，装在 ~/.local/bin。setup-uv 不提供 v10 这样的主版本标签，要写完整版本号
+      - uses: astral-sh/setup-uv@v10.3.0
         with: { enable-cache: false }
       - run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       # 下面的步骤和本机的 make ci（scripts/ci.sh）一致，改一处要同步另一处
