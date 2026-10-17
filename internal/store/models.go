@@ -79,7 +79,7 @@ type Merchant struct {
 const (
 	ChannelAlipayQR = "alipay_qr" // 支付宝经营码：查账加金额尾数推断
 	ChannelEpay     = "epay"      // 上游易支付：预下单、回调、查单逐单确认
-	ChannelDemo     = "demo"      // 演示渠道：流水在内存里，只在 TILLBOX_CHANNEL=fake 时可用
+	ChannelDemo     = "demo"      // 演示渠道：流水在内存里，只在 TILLBOX_DEMO=true 时可用
 )
 
 // Channel 是一个支付渠道实例。

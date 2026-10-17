@@ -29,7 +29,7 @@ var ErrNotFound = errors.New("渠道不存在")
 type Registry struct {
 	db  *bun.DB
 	box *secret.Box
-	// Demo 为真时允许演示渠道（TILLBOX_CHANNEL=fake）。
+	// Demo 为真时允许演示渠道（TILLBOX_DEMO=true）。
 	Demo bool
 	// OnChange 在渠道增删改、重新加载后调用（同步查账任务）。
 	OnChange func()
@@ -176,7 +176,7 @@ func (r *Registry) merge(typ, cur string, in Input) (string, error) {
 		return upstream.Merge(r.box, cur, in.Config, in.Enabled)
 	case store.ChannelDemo:
 		if !r.Demo {
-			return "", channel.Invalid("演示渠道只能在本地演示模式（TILLBOX_CHANNEL=fake）下使用")
+			return "", channel.Invalid("演示渠道只能在本地演示模式（TILLBOX_DEMO=true）下使用")
 		}
 		return "{}", nil
 	}

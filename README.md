@@ -17,10 +17,10 @@
 
 ```sh
 make build
-TILLBOX_CHANNEL=fake TILLBOX_LISTEN=127.0.0.1:8080 ./bin/tillbox
+TILLBOX_DEMO=true TILLBOX_LISTEN=127.0.0.1:8080 ./bin/tillbox
 ```
 
-打开 <http://localhost:8080/admin>，用首次启动日志里的随机密码登录。`fake` 是本机演示模式：可以建演示渠道，会开放模拟付款接口，没有任何渠道时自动建一个演示渠道；正式运行用默认的 `alipay`，支付渠道在后台“支付渠道”页配置。
+打开 <http://localhost:8080/admin>，用首次启动日志里的随机密码登录。`TILLBOX_DEMO=true` 是本机演示模式：可以建演示渠道，会开放模拟付款接口，没有任何渠道时自动建一个演示渠道。正式运行不要设置它，支付渠道在后台“支付渠道”页配置。
 
 也可以在源码目录运行：
 

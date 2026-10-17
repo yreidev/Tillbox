@@ -202,7 +202,7 @@ function AdminLayout() {
                 </Chip>
               </Tooltip.Trigger>
               <Tooltip.Content className="max-w-64">
-                以 TILLBOX_CHANNEL=fake 启动：可以建演示渠道，用模拟付款走通整个流程。
+                以 TILLBOX_DEMO=true 启动：可以建演示渠道，用模拟付款走通整个流程。
               </Tooltip.Content>
             </Tooltip>
           )}

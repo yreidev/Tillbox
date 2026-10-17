@@ -297,7 +297,7 @@ export interface AuditLog {
 
 export interface Me {
   site_name: string
-  /** TILLBOX_CHANNEL=fake 启动：可以建演示渠道 */
+  /** TILLBOX_DEMO=true 启动：可以建演示渠道 */
   demo: boolean
   /** 对接方填的接口地址（按对外地址配置算出，以 / 结尾） */
   api_url: string

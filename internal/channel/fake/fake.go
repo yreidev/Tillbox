@@ -1,5 +1,5 @@
 // Package fake 是演示渠道（渠道类型 demo）：流水存在内存里，靠模拟付款接口注入，不连支付宝。
-// 只在 TILLBOX_CHANNEL=fake 时可以使用，给本地演示和测试用。
+// 只在 TILLBOX_DEMO=true 时可以使用，给本地演示和测试用。
 package fake
 
 import (
@@ -32,7 +32,7 @@ func (c *Channel) PayTypes() []string          { return []string{"alipay"} }
 func (c *Channel) MaxSpan() time.Duration      { return 24 * time.Hour }
 func (c *Channel) Ready(context.Context) error {
 	if !c.Allowed {
-		return errors.New("演示渠道只能在本地演示模式（TILLBOX_CHANNEL=fake）下使用")
+		return errors.New("演示渠道只能在本地演示模式（TILLBOX_DEMO=true）下使用")
 	}
 	return c.CheckEnabled()
 }

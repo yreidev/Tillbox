@@ -41,7 +41,7 @@ type API struct {
 	Secure func(r *http.Request) bool
 	// BaseURL 返回对外地址（不带末尾的 /），后台展示给对接方填的接口地址用它。
 	BaseURL func(r *http.Request) string
-	// Demo 为真表示本地演示模式（TILLBOX_CHANNEL=fake），可以用演示渠道和模拟付款。
+	// Demo 为真表示本地演示模式（TILLBOX_DEMO=true），可以用演示渠道和模拟付款。
 	Demo bool
 }
 

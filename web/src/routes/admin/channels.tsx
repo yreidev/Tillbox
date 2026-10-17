@@ -1148,7 +1148,7 @@ function DemoForm({ c, onCreated }: { c?: ChannelView; onCreated: (id: number) =
         >
           <Notice status="warning">
             演示渠道不连支付宝，流水存在内存里，向 POST /web-api/dev/pay
-            提交订单号模拟付款（见开发文档）。只在本地演示模式（TILLBOX_CHANNEL=fake）下可用。
+            提交订单号模拟付款（见开发文档）。只在本地演示模式（TILLBOX_DEMO=true）下可用。
           </Notice>
           <BaseFields v={v} set={setBase} />
           <EnableField c={c} v={v} set={setBase} />

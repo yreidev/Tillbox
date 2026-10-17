@@ -67,10 +67,9 @@ func New(ctx context.Context, cfg *config.Config, db *bun.DB, box *secret.Box, u
 	a.Maintenance = maintenance.New(db, st, cfg.DataDir)
 	a.Orders.OnPaid = a.Notifier.Wake
 
-	demo := cfg.Channel == "fake"
 	a.Ledger = ledger.New(db, a.Orders)
 	a.Pollers = ledger.NewPollers(db, a.Ledger, st)
-	a.Channels = registry.New(db, box, demo)
+	a.Channels = registry.New(db, box, cfg.Demo)
 	a.Channels.OnChange = func() { a.Pollers.Sync(a.Channels.Sources()) }
 	if err := a.Channels.EnsureDemo(ctx); err != nil {
 		return nil, fmt.Errorf("建演示渠道失败：%w", err)
@@ -91,12 +90,12 @@ func New(ctx context.Context, cfg *config.Config, db *bun.DB, box *secret.Box, u
 		Assistance: a.Assistance,
 		DB:         db, Auth: a.Auth, Merchants: a.Merchants, Orders: a.Orders, Ledger: a.Ledger, Pollers: a.Pollers, Confirm: a.Confirm, Channels: a.Channels,
 		Notifier: a.Notifier, Signer: a.Signer, Maintenance: a.Maintenance, Settings: st, ClientIP: proxy.ClientIP, Secure: proxy.Secure,
-		BaseURL: proxy.BaseURL, Demo: demo,
+		BaseURL: proxy.BaseURL, Demo: cfg.Demo,
 	}
 	a.Handler = web.Handler(web.Deps{
 		Assistance: a.Assistance,
 		Config:     cfg, Gateway: gw, Admin: api, Orders: a.Orders, Settings: st, Channels: a.Channels,
-		Pollers: a.Pollers, Confirm: a.Confirm, Signer: a.Signer, Demo: demo, UI: ui,
+		Pollers: a.Pollers, Confirm: a.Confirm, Signer: a.Signer, Demo: cfg.Demo, UI: ui,
 	})
 	return a, nil
 }

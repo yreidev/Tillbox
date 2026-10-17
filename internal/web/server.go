@@ -37,7 +37,7 @@ type Deps struct {
 	Pollers    *ledger.Pollers
 	Confirm    *confirm.Service
 	Signer     *notify.Signer
-	Demo       bool // TILLBOX_CHANNEL=fake：提供模拟付款接口
+	Demo       bool // TILLBOX_DEMO=true：提供模拟付款接口
 	UI         fs.FS
 }
 

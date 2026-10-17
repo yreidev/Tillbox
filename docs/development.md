@@ -17,7 +17,7 @@ make check
 开发预览用两个终端：
 
 ```sh
-TILLBOX_CHANNEL=fake TILLBOX_LISTEN=127.0.0.1:8080 go run ./cmd/tillbox
+TILLBOX_DEMO=true TILLBOX_LISTEN=127.0.0.1:8080 go run ./cmd/tillbox
 ```
 
 ```sh

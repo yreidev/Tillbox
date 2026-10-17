@@ -237,7 +237,7 @@ func (c *cashier) returnURL(w http.ResponseWriter, r *http.Request) {
 	jsonOut(w, http.StatusOK, map[string]any{"url": notify.AppendQuery(o.ReturnURL, p)})
 }
 
-// registerDev 注册演示渠道的模拟付款接口（只有 TILLBOX_CHANNEL=fake 时才有）。
+// registerDev 注册演示渠道的模拟付款接口（只有 TILLBOX_DEMO=true 时才有）。
 func registerDev(mux *http.ServeMux, d Deps) {
 	mux.HandleFunc("POST /web-api/dev/pay", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {

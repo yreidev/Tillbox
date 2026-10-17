@@ -111,7 +111,7 @@ func serve() error {
 		return err
 	}
 	defer db.Close()
-	slog.Info("Tillbox 启动", "version", version, "revision", revision, "db", cfg.DBDriver, "channel", cfg.Channel)
+	slog.Info("Tillbox 启动", "version", version, "revision", revision, "db", cfg.DBDriver, "demo", cfg.Demo)
 
 	a, err := app.New(ctx, cfg, db, box, webui.FS())
 	if err != nil {
@@ -120,7 +120,7 @@ func serve() error {
 	if a.AdminPassword != "" {
 		slog.Warn("已生成管理员密码，请登录后立即修改", "password", a.AdminPassword)
 	}
-	if cfg.Channel == "fake" {
+	if cfg.Demo {
 		slog.Warn("正在使用本地演示模式：可以建演示渠道，付款靠 POST /web-api/dev/pay 模拟，不要用于生产")
 	}
 	a.Run(ctx)

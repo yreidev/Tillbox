@@ -26,8 +26,8 @@ type Config struct {
 	TrustedProxies []string `env:"TILLBOX_TRUSTED_PROXIES" envSeparator:","`
 	// 主密钥（32 字节的 Base64）。为空时读 DataDir/master.key，没有就生成一个
 	MasterKey string `env:"TILLBOX_MASTER_KEY"`
-	// 运行模式：alipay（正式收款，支付渠道在后台配置）或 fake（本地演示模式：可以建演示渠道、模拟付款，不连支付宝）
-	Channel string `env:"TILLBOX_CHANNEL" envDefault:"alipay"`
+	// 本地演示模式：可以建演示渠道、模拟付款，不连真实的收款渠道。只用于本机演示和开发
+	Demo bool `env:"TILLBOX_DEMO"`
 	// 日志级别：debug / info / warn / error
 	LogLevel string `env:"TILLBOX_LOG_LEVEL" envDefault:"info"`
 
@@ -57,11 +57,6 @@ func (c *Config) normalize() error {
 		}
 	default:
 		return fmt.Errorf("TILLBOX_DB_DRIVER 只能是 sqlite 或 postgres，收到 %q", c.DBDriver)
-	}
-	switch c.Channel {
-	case "alipay", "fake":
-	default:
-		return fmt.Errorf("TILLBOX_CHANNEL 只能是 alipay 或 fake，收到 %q", c.Channel)
 	}
 	if c.PublicURL != "" {
 		u, err := url.Parse(c.PublicURL)

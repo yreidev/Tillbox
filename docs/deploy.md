@@ -55,7 +55,7 @@ TILLBOX_PUBLIC_URL=https://pay.example.com \
 | `TILLBOX_PUBLIC_URL` | 空 | 对外地址；为空时从请求推断，正式部署应显式设置 |
 | `TILLBOX_TRUSTED_PROXIES` | 空 | 可信代理 IP 或 CIDR，逗号分隔；只接受这些来源的转发头 |
 | `TILLBOX_MASTER_KEY` | 空 | 32 字节密钥的 Base64；为空时读取或生成 `master.key` |
-| `TILLBOX_CHANNEL` | `alipay` | `alipay` 正式运行，支付渠道全部在后台配置；`fake` 本机演示模式，允许建演示渠道并模拟付款，没有任何渠道时自动建一个 |
+| `TILLBOX_DEMO` | `false` | `true` 是本机演示模式：允许建演示渠道并模拟付款，没有任何渠道时自动建一个。正式运行不要设置，支付渠道全部在后台配置 |
 | `TILLBOX_LOG_LEVEL` | `info` | `debug`、`info`、`warn`、`error` |
 
 支付渠道（经营码、上游易支付）、商户和查账间隔在后台配置，不放环境变量。主密钥用于加密库里的商户密钥、渠道密钥（支付宝应用私钥、上游的商户密钥和私钥）和平台私钥，必须与数据库一起备份。

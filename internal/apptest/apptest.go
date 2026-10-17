@@ -74,7 +74,7 @@ func New(t testing.TB) *Env {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	cfg := &config.Config{Channel: "fake", DBDriver: driver, DBDSN: dsn, DataDir: t.TempDir()}
+	cfg := &config.Config{Demo: true, DBDriver: driver, DBDSN: dsn, DataDir: t.TempDir()}
 	a, err := app.New(ctx, cfg, db, box, fstest.MapFS{})
 	if err != nil {
 		t.Fatal(err)
