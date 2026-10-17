@@ -63,15 +63,20 @@ def timestamp(value):
     return dt.datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp() if value else 0
 
 
+def as_object(value):
+    # 设置项是文本，要再解析一次；SQL 里用 json_object 拼出来的字段（automation）已经是对象
+    return value if isinstance(value, dict) else json.loads(value or '{}')
+
+
 def evaluate_db(data, now):
     issues = {}
-    maintenance = json.loads(data['maintenance'])
-    retention = json.loads(data['retention'])
-    payment = json.loads(data['payment'])
+    maintenance = as_object(data['maintenance'])
+    retention = as_object(data['retention'])
+    payment = as_object(data['payment'])
     # Every enabled Alipay QR channel has its own ledger poller and state.
     failing, backfill, stale = [], [], []
     for channel in data['ledgers']:  # json_group_array arrives as a real array
-        ledger = json.loads(channel['state'])
+        ledger = as_object(channel['state'])
         if ledger.get('failures', 0) >= 3:
             failing.append(channel['name'])
         if ledger.get('backfill_failures', 0) >= 3:
@@ -86,8 +91,8 @@ def evaluate_db(data, now):
         issues['ledger_stale'] = f'支付宝查账成功时间超过阈值，请检查是否影响到账确认：{"、".join(stale)}'
     if data['dead']:
         issues['notifications'] = f'存在 {data["dead"]} 笔通知死信，请处理并重发'
-    automation = json.loads(data.get('automation', '{}'))
-    automation_state = json.loads(data.get('automation_state', '{}'))
+    automation = as_object(data.get('automation'))
+    automation_state = as_object(data.get('automation_state'))
     if automation.get('enabled'):
         if automation_state.get('last_error'):
             issues['automation'] = 'AI 自动处理巡检失败，请检查模型配置和处理记录'

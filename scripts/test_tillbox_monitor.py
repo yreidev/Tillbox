@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import sqlite3
 import unittest
 import unittest.mock
 from pathlib import Path
@@ -68,6 +69,48 @@ class MonitorTest(unittest.TestCase):
         data['automation_state'] = json.dumps({'last_run_at': now * 1000})
         data['assistance_manual'] = 0
         self.assertEqual(monitor.evaluate_db(data, now), {})
+
+    def test_sql_with_saved_settings(self):
+        # 用巡检的真实 SQL 查一个最小的库：保存过 AI 配置后，automation 字段是嵌套对象而不是字符串
+        now = 100_000
+        with sqlite3.connect(':memory:') as conn:
+            conn.executescript("""
+                CREATE TABLE channels (id INTEGER PRIMARY KEY, type TEXT, name TEXT, enabled INTEGER);
+                CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
+                CREATE TABLE notifications (status TEXT);
+                CREATE TABLE assistance_cases (status TEXT);
+            """)
+            conn.execute("INSERT INTO channels VALUES (1, 'alipay_qr', '支付宝经营码', 1)")
+            conn.execute("INSERT INTO channels VALUES (2, 'upstream_epay', '上游', 1)")
+            healthy = json.dumps({'last_ok_at': now * 1000, 'failures': 0})
+            for key, value in [
+                ('ledger_state:ch1', healthy),
+                ('maintenance_state', json.dumps({'last_ok_at': now * 1000})),
+                ('automation_state', json.dumps({'last_run_at': now * 1000})),
+            ]:
+                conn.execute('INSERT INTO settings VALUES (?, ?)', (key, value))
+
+            def query():
+                return json.loads(conn.execute(monitor.SQL).fetchone()[0])
+
+            self.assertEqual(monitor.evaluate_db(query(), now), {})
+            for enabled in (False, True):
+                with self.subTest(enabled=enabled):
+                    conn.execute(
+                        'INSERT OR REPLACE INTO settings VALUES (?, ?)',
+                        ('automation', json.dumps({'enabled': enabled, 'interval_seconds': 60})),
+                    )
+                    self.assertEqual(monitor.evaluate_db(query(), now), {})
+            conn.execute(
+                'UPDATE settings SET value = ? WHERE key = ?',
+                (json.dumps({'last_run_at': (now - 601) * 1000, 'last_error': 'timeout'}), 'automation_state'),
+            )
+            conn.execute("INSERT INTO assistance_cases VALUES ('manual')")
+            conn.execute('UPDATE settings SET value = ? WHERE key = ?', ('{"failures":3}', 'ledger_state:ch1'))
+            self.assertEqual(
+                set(monitor.evaluate_db(query(), now)),
+                {'automation', 'automation_stale', 'assistance_manual', 'ledger_failures', 'ledger_stale'},
+            )
 
     def test_alert_target_from_environment(self):
         with unittest.mock.patch.dict(
