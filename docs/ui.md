@@ -4,7 +4,7 @@
 
 ## 原则
 
-- **只用开源组件**：组件来自 `@heroui/react`（v3，基于 React Aria），样式用 Tailwind CSS v4，图标用 `@gravity-ui/icons`。HeroUI Pro 的模板只当版式参考（侧栏外壳、页头、指标卡、设置行、带计数的筛选标签、空状态引导、底部保存栏、危险操作区、编辑抽屉里的配置清单），代码全部自己写，不引入也不复制 Pro 的包和源码。
+- **只用开源组件**：组件是 HeroUI v3 开源版（基于 React Aria），统一从组件库 `@yreidev/ui` 导入（它原样转出 `@heroui/react`，见 [development.md](development.md#组件库-yreideviu私有包)），样式用 Tailwind CSS v4，图标用 `@gravity-ui/icons`。HeroUI Pro 的模板只当版式参考（侧栏外壳、页头、指标卡、设置行、带计数的筛选标签、空状态引导、底部保存栏、危险操作区、编辑抽屉里的配置清单），代码全部自己写，不引入也不复制 Pro 的包和源码。
 - **HeroUI 默认观感**：默认主题、默认蓝色主色，不覆盖主题变量。颜色只用主题变量对应的工具类（`bg-background`、`bg-surface`、`bg-surface-secondary`、`text-muted`、`border-separator`、`text-accent`、`bg-success-soft` 等），不写死色值。唯一例外是收银台二维码的白色底板，深色模式下也要能扫。
 - **数字对齐**：金额、笔数用 `tb-num`（等宽数字），订单号、流水号、密钥用 `tb-mono`（等宽字体），两个类在 `web/src/styles/theme.css`。
 - **一页一个主操作**：页面右上角或卡片底部只放一个主色按钮，其余用次要样式。

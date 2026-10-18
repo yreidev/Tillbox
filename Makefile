@@ -52,8 +52,10 @@ ci:
 release:
 	sh scripts/release.sh $(VERSION)
 
+# 前端依赖里有私有包，读包令牌取环境变量 GITHUB_TOKEN，见 docs/development.md
 image:
-	docker build --platform linux/amd64 --build-arg VERSION=$(VERSION) --build-arg REVISION=$(REVISION) -t $(IMAGE) .
+	@test -n "$$GITHUB_TOKEN" || { echo '需要设置 GITHUB_TOKEN（能读 GitHub Packages 的令牌），见 docs/development.md' >&2; exit 1; }
+	docker build --platform linux/amd64 --secret id=GITHUB_TOKEN --build-arg VERSION=$(VERSION) --build-arg REVISION=$(REVISION) -t $(IMAGE) .
 
 # make lint 和 make vuln 用的工具，CI 也用它装。Go 工具装到 $(GOBIN)，ruff 用 uv 装，两处都要在 PATH 里。
 tools:

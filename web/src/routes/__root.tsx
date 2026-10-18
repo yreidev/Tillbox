@@ -1,7 +1,6 @@
 import type { QueryClient } from '@tanstack/react-query'
 import { Outlet, createRootRouteWithContext } from '@tanstack/react-router'
-import { Button, I18nProvider, Toast } from '@heroui/react'
-import { linkVariants } from '@heroui/styles'
+import { Button, I18nProvider, linkVariants, Toast } from '@yreidev/ui'
 import { Logo } from '../components/brand'
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({

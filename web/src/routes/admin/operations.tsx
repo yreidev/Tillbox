@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Form } from '@heroui/react'
+import { Button, Form } from '@yreidev/ui'
 import { ArrowDownToLine } from '@gravity-ui/icons'
 import { api } from '../../lib/api'
 import { relative, time } from '../../lib/format'

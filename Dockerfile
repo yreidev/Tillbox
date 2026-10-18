@@ -2,8 +2,10 @@
 FROM --platform=$BUILDPLATFORM node:24-alpine AS web
 WORKDIR /src/web
 RUN npm install --global pnpm@10.32.1
-COPY web/package.json web/pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+COPY web/package.json web/pnpm-lock.yaml web/.npmrc ./
+# 组件库 @yreidev/ui 是 GitHub Packages 上的私有包：读包令牌用构建密钥传入，不留在镜像层里。
+# 构建时要带上 --secret id=GITHUB_TOKEN（取同名环境变量），见 docs/development.md
+RUN --mount=type=secret,id=GITHUB_TOKEN,env=GITHUB_TOKEN,required=true pnpm install --frozen-lockfile
 COPY web/ ./
 RUN pnpm build
 

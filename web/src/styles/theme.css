@@ -5,6 +5,11 @@
  */
 @import 'tailwindcss';
 @import '@heroui/styles';
+/*
+ * 组件都从 @yreidev/ui 导入，但现在用的全是开源 HeroUI 组件，样式由上一行提供。
+ * 用到 @yreidev/ui 自己的组件（Sidebar、KPI 等）时，按组件加一行 @import '@yreidev/ui/css/<目录名>.css';（不加 layer）。
+ * 不要整包引入 @yreidev/ui/css：每个页面的样式表会多 20 KB 左右（gzip），收银台也一样。
+ */
 
 @theme {
   --font-sans:

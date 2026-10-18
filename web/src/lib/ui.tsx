@@ -23,7 +23,7 @@ import {
   ToggleButton,
   ToggleButtonGroup,
   type Key,
-} from '@heroui/react'
+} from '@yreidev/ui'
 import { Tray, Xmark } from '@gravity-ui/icons'
 import { fromDate, getLocalTimeZone, toCalendarDate } from '@internationalized/date'
 import { yuan } from './format'

@@ -103,6 +103,17 @@ TILLBOX_EPAY_SDK=/path/to/epay-sdk \
 
 ## 前端约定
 
+### 组件库 @yreidev/ui（私有包）
+
+页面里的组件一律从 `@yreidev/ui` 导入，不写 `from '@heroui/react'`。它是维护者自己的组件库：原样转出开源 HeroUI 的全部导出（`linkVariants` 这类样式函数也在），另有侧栏、指标卡、图表等组件。
+
+- 它发布在 GitHub Packages，是私有包。`web/.npmrc` 指定 `@yreidev` 作用域的仓库地址，令牌取环境变量 `GITHUB_TOKEN`，文件里不写令牌本身。
+- 装前端依赖（`make build`、`make deps`、`pnpm install`）前，先导出一个能读这个包的令牌：GitHub Packages 只认经典个人令牌（personal access token classic），至少勾 `read:packages`。没有读权限的人从源码构建不了前端，请直接用发布好的镜像（见 [deploy.md](deploy.md)）。
+- 构建镜像时令牌作为构建密钥传入（`docker build --secret id=GITHUB_TOKEN`，`make image` 和 `compose.yaml` 都已带上），只在 `pnpm install` 那一步可见，不留在镜像层里。
+- CI 用工作流自带的 `GITHUB_TOKEN`：包设置里的 “Manage Actions access” 给了本仓库读权限，工作流声明了 `packages: read`。换仓库或 fork 后要重新授权，否则装依赖这一步会报 401/403。
+- 样式：现在只用开源 HeroUI 组件，`web/src/styles/theme.css` 不引组件包的样式。用到组件包自己的组件时，按组件加一行 `@import '@yreidev/ui/css/<目录名>.css';`（不加 layer）；不要整包引 `@yreidev/ui/css`，每个页面的样式表会多 20 KB 左右（gzip），收银台也一样。
+- 组件包缺的组件由维护者加进组件库、发新版本，这里升级后再用，不在本仓库里另写一个。升级：`pnpm --dir web update @yreidev/ui --latest`。
+
 ### HeroUI 代理工具
 
 按 [HeroUI 官方说明](https://heroui.com/en/docs/react/getting-started/agent-skills) 装了 HeroUI v3 的三样代理工具，都是开发工具，不影响应用运行依赖，也不进 Docker 镜像（见 `.dockerignore`）：
@@ -119,7 +130,7 @@ TILLBOX_EPAY_SDK=/path/to/epay-sdk \
 
 ### 页面开发
 
-界面用 HeroUI v3 开源组件、Tailwind CSS v4 和 Gravity UI 图标，规范和公共组件说明见 [ui.md](ui.md)。写组件前先按 `AGENTS.md` / `CLAUDE.md` 的文档索引查 `.heroui-docs/` 里的文档，以文档和 `node_modules/@heroui` 的源码为准。HeroUI Pro 只当版式参考，不引入它的包和源码。
+界面用 HeroUI v3 开源组件（从 `@yreidev/ui` 导入，见上文）、Tailwind CSS v4 和 Gravity UI 图标，规范和公共组件说明见 [ui.md](ui.md)。写组件前先按 `AGENTS.md` / `CLAUDE.md` 的文档索引查 `.heroui-docs/` 里的文档，以文档和 `node_modules/@heroui` 的源码为准。HeroUI Pro 只当版式参考，不引入它的包和源码。
 
 放在自动刷新页面里的表单（如运维页的保留期）用 `key` 绑定服务端数据，数据变了才重建表单，避免刷新时冲掉正在填写的内容。对外页面只引 `web/src/lib/ui-base.tsx` 和 `ui-form.tsx`，不要引 `ui.tsx`，否则收银台会连带下载后台组件。
 

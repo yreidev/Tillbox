@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Card, Tooltip } from '@heroui/react'
+import { Button, Card, Tooltip } from '@yreidev/ui'
 import { ArrowRotateRight, Xmark } from '@gravity-ui/icons'
 import { OrderDetail } from '../../components/order-detail'
 import { api, overviewQuery, query } from '../../lib/api'

@@ -2,7 +2,7 @@
 // 结构和 internal/admin/telegram.go 一致。
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Description, Dropdown, Form, Label, Separator } from '@heroui/react'
+import { Button, Description, Dropdown, Form, Label, Separator } from '@yreidev/ui'
 import {
   ArrowUpRightFromSquare,
   ChevronDown,

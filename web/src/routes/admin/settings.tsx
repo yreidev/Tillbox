@@ -1,7 +1,7 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Form } from '@heroui/react'
+import { Button, Form } from '@yreidev/ui'
 import { ArrowsRotateRight, ArrowUpRightFromSquare, Copy, Eye, Shield } from '@gravity-ui/icons'
 import { TelegramSettings } from '../../components/telegram-settings'
 import { api, query } from '../../lib/api'

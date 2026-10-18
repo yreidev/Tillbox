@@ -1,7 +1,7 @@
 import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from 'react'
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery, type UseQueryResult } from '@tanstack/react-query'
-import { Button, Form, Spinner } from '@heroui/react'
+import { Button, Form, Spinner } from '@yreidev/ui'
 import {
   ArrowLeft,
   ArrowRotateRight,

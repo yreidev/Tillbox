@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Drawer } from '@heroui/react'
+import { Button, Drawer } from '@yreidev/ui'
 import { ArrowUpRightFromSquare, Bell, CircleXmark, LinkSlash } from '@gravity-ui/icons'
 import { api } from '../lib/api'
 import { relative, time, yuan } from '../lib/format'

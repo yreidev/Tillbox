@@ -18,7 +18,7 @@ import {
   Skeleton,
   Switch,
   toast,
-} from '@heroui/react'
+} from '@yreidev/ui'
 import {
   ChevronDown,
   CreditCard,

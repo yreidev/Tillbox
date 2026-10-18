@@ -1,7 +1,7 @@
 import { useEffect, useState, type ComponentType, type SVGProps } from 'react'
 import { Link, Outlet, createFileRoute, redirect, useNavigate, useRouterState } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Avatar, Button, Chip, Drawer, Dropdown, Form, Header, Label, Separator, Tooltip } from '@heroui/react'
+import { Avatar, Button, Chip, Drawer, Dropdown, Form, Header, Label, Separator, Tooltip } from '@yreidev/ui'
 import {
   Archive,
   ArrowRightArrowLeft,

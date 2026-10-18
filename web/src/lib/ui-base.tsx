@@ -1,8 +1,7 @@
 // 对外页面和后台都用的基础小组件：提示条、标签、卡片、步骤圆点、复制。只依赖少量 HeroUI 组件，
 // 收银台只引这个文件，不会连带下载后台的表格、分页这些组件。规范见 docs/ui.md。
 import type { ReactNode } from 'react'
-import { Alert, Button, Card, Chip, toast, type Key } from '@heroui/react'
-import { linkVariants } from '@heroui/styles'
+import { Alert, Button, Card, Chip, linkVariants, toast, type Key } from '@yreidev/ui'
 import { CircleCheckFill, CircleXmarkFill, Copy } from '@gravity-ui/icons'
 
 /** cx 拼接 className，跳过空值。 */

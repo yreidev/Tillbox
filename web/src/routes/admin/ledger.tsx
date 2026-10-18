@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Card } from '@heroui/react'
+import { Button, Card } from '@yreidev/ui'
 import { CircleCheck, Link as LinkIcon } from '@gravity-ui/icons'
 import { LedgerRow } from '../../components/ledger-status'
 import { OrderDetail } from '../../components/order-detail'

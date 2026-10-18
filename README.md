@@ -15,7 +15,7 @@
 
 ## 本地运行
 
-需要 Go 1.26 以上、Node.js 24 以上、pnpm 10.32.1。
+需要 Go 1.26 以上、Node.js 24 以上、pnpm 10.32.1。前端的组件库 `@yreidev/ui` 是 GitHub Packages 上的私有包，从源码构建要先导出能读它的 `GITHUB_TOKEN`（见[开发与验证](docs/development.md#组件库-yreideviu私有包)）；没有权限时直接用下面的发布镜像。
 
 ```sh
 make build

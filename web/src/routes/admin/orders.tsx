@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { Button } from '@heroui/react'
+import { Button } from '@yreidev/ui'
 import { ArrowDownToLine, FunnelXmark } from '@gravity-ui/icons'
 import { OrderDetail } from '../../components/order-detail'
 import { api, channelsQuery, overviewQuery, query } from '../../lib/api'

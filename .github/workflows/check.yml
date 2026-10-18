@@ -6,8 +6,10 @@ on:
   workflow_dispatch:
     inputs:
       tag: { description: '已有的版本标签，如 v0.3.0', required: true }
+# packages: read 用来装前端依赖里的私有包 @yreidev/ui：包设置里给本仓库开了读权限，GITHUB_TOKEN 就能装
 permissions:
   contents: read
+  packages: read
 jobs:
   check:
     # 手动补推镜像时不用再检查：标签发版时已经检查过
@@ -40,6 +42,7 @@ jobs:
       # 下面的步骤和本机的 make ci（scripts/ci.sh）一致，改一处要同步另一处
       - run: make tools
       - run: make build
+        env: { GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}' }
       - run: make lint vuln test check test-race
       - run: make test-pg
         env:
@@ -60,10 +63,11 @@ jobs:
       # 取全部标签，用来判断这是不是最新版本
       - uses: actions/checkout@v7
         with: { ref: '${{ inputs.tag || github.ref }}', fetch-depth: 0 }
-      # source 标签让 GHCR 把镜像关联到本仓库
-      - run: |
+      # source 标签让 GHCR 把镜像关联到本仓库；GITHUB_TOKEN 作为构建密钥传进去装私有包，不留在镜像里
+      - env: { GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}' }
+        run: |
           [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          docker build --platform linux/amd64 --build-arg VERSION="${TAG#v}" --build-arg REVISION="$(git rev-parse HEAD)" \
+          docker build --platform linux/amd64 --secret id=GITHUB_TOKEN --build-arg VERSION="${TAG#v}" --build-arg REVISION="$(git rev-parse HEAD)" \
             --label org.opencontainers.image.source="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" -t "tillbox:$TAG" .
       - run: docker save "tillbox:$TAG" -o tillbox-linux-amd64.tar
       - run: sha256sum tillbox-linux-amd64.tar > tillbox-linux-amd64.tar.sha256

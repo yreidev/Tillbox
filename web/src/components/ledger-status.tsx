@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Button, Tooltip } from '@heroui/react'
+import { Button, Tooltip } from '@yreidev/ui'
 import { ArrowRotateRight } from '@gravity-ui/icons'
 import { api } from '../lib/api'
 import { relative, time } from '../lib/format'

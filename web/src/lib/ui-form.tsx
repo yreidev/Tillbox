@@ -21,7 +21,7 @@ import {
   TextField,
   TimeField,
   type Key,
-} from '@heroui/react'
+} from '@yreidev/ui'
 import { fromDate, getLocalTimeZone, toZoned } from '@internationalized/date'
 import { cx } from './ui-base'
 

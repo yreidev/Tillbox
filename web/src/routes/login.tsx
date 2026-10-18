@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
-import { Button, Card, Form } from '@heroui/react'
+import { Button, Card, Form } from '@yreidev/ui'
 import { Logo, siteName } from '../components/brand'
 import { api } from '../lib/api'
 import { Notice } from '../lib/ui-base'

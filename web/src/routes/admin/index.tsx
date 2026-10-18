@@ -1,8 +1,7 @@
 import { useState, type ComponentType, type ReactNode, type SVGProps } from 'react'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { Tooltip } from '@heroui/react'
-import { linkVariants } from '@heroui/styles'
+import { linkVariants, Tooltip } from '@yreidev/ui'
 import {
   Bell,
   ChevronRight,

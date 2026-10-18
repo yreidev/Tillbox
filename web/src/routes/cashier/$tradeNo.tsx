@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Card, Spinner } from '@heroui/react'
+import { Button, Card, Spinner } from '@yreidev/ui'
 import {
   ArrowUpRightFromSquare,
   Check,
