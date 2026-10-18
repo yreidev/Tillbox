@@ -2,6 +2,8 @@
 
 ## 未发布
 
+## 0.7.0 — 2026-10-18
+
 - 前端组件改从组件库 `@yreidev/ui` 导入（它原样转出开源 HeroUI，界面和样式表不变）。它是 GitHub Packages 上的私有包：从源码构建（`make build`、`make image`、`docker compose up --build`）要先导出能读它的 `GITHUB_TOKEN`，见 `docs/development.md`；直接用发布的镜像不受影响。
 - 界面改用组件库现成的组件，功能、路由和接口不变：
   - 后台外壳换成组件库的侧栏布局：侧栏可以收成图标栏（顶栏按钮或 Ctrl/⌘+B），收起后待办数显示成小圆点；768px 以下是抽屉。
