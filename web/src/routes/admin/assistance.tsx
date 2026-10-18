@@ -24,7 +24,7 @@ import {
   SwitchInput,
   TextAreaInput,
   TextInput,
-  Timeline,
+  Events,
   cx,
   toastError,
   toastOK,
@@ -526,7 +526,7 @@ function CaseSheet({
                 )}
                 {actions.length > 0 && (
                   <Section title="处理过程">
-                    <Timeline
+                    <Events
                       items={actions.map((a) => ({
                         key: a.id,
                         tone: actionTone[a.action] ?? 'default',

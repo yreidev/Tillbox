@@ -4,7 +4,7 @@
 
 ## 原则
 
-- **只用开源组件**：组件是 HeroUI v3 开源版（基于 React Aria），统一从组件库 `@yreidev/ui` 导入（它原样转出 `@heroui/react`，见 [development.md](development.md#组件库-yreideviu私有包)），样式用 Tailwind CSS v4，图标用 `@gravity-ui/icons`。HeroUI Pro 的模板只当版式参考（侧栏外壳、页头、指标卡、设置行、带计数的筛选标签、空状态引导、底部保存栏、危险操作区、编辑抽屉里的配置清单），代码全部自己写，不引入也不复制 Pro 的包和源码。
+- **组件都用组件库现成的**：组件统一从组件库 `@yreidev/ui` 导入（见 [development.md](development.md#组件库-yreideviu私有包)）。它原样转出开源 HeroUI v3（基于 React Aria），另有外观对齐 HeroUI Pro 的组件：后台外壳（`AppLayout`、`Sidebar`、`Navbar`）、指标卡（`KPI`）、表格（`DataGrid`）、列表（`ListView`、`ItemCard`）、步骤条（`Stepper`）、时间线（`Timeline`）、分段切换（`Segment`）、空状态（`EmptyState`）、图表（`BarChart`、`ComposedChart`，基于 recharts）。这些是组件库自己写的，本仓库不引入也不复制 Pro 的包和源码。库里没有的组件先加进组件库、发新版本再用，不在本仓库里手写一个凑合。样式用 Tailwind CSS v4，图标用 `@gravity-ui/icons`。
 - **HeroUI 默认观感**：默认主题、默认蓝色主色，不覆盖主题变量。颜色只用主题变量对应的工具类（`bg-background`、`bg-surface`、`bg-surface-secondary`、`text-muted`、`border-separator`、`text-accent`、`bg-success-soft` 等），不写死色值。唯一例外是收银台二维码的白色底板，深色模式下也要能扫。
 - **数字对齐**：金额、笔数用 `tb-num`（等宽数字），订单号、流水号、密钥用 `tb-mono`（等宽字体），两个类在 `web/src/styles/theme.css`。
 - **一页一个主操作**：页面右上角或卡片底部只放一个主色按钮，其余用次要样式。
@@ -13,20 +13,23 @@
 
 | 文件 | 内容 |
 | --- | --- |
-| `web/src/styles/theme.css` | 样式入口：引入 Tailwind 和 HeroUI 样式，定义字体、`tb-num`、`tb-mono`，并给 HeroUI 按钮补上“处理中”的转圈（HeroUI 的 `isPending` 只屏蔽点击，没有视觉变化） |
-| `web/src/lib/ui-base.tsx` | 基础组件：`Notice` 提示条、`Pill` 标签、`Panel` 卡片、`StatusDot`、`Timeline`、`stepDot`、`Copyable`、`copyText`、提示消息、`cx`、`linkClass` |
+| `web/src/styles/theme.css` | 样式入口：引入 Tailwind 和 HeroUI 样式，以及对外页面也用到的组件库组件样式（`ItemCard`、`Stepper`、`Timeline`）；定义字体、`tb-num`、`tb-mono`，并给 HeroUI 按钮补上“处理中”的转圈（HeroUI 的 `isPending` 只屏蔽点击，没有视觉变化） |
+| `web/src/styles/admin.css` | 只有后台用的组件库组件样式（外壳、表格、图表、指标卡等），由 `ui.tsx` 引入，随后台代码按需加载 |
+| `web/src/lib/ui-base.tsx` | 基础组件：`Notice` 提示条、`Pill` 标签、`Panel` 卡片、`StatusDot`、`Events`（竖排的步骤或事件记录，基于 `Timeline`）、`Copyable`、`copyText`、提示消息、`cx`、`linkClass` |
 | `web/src/lib/ui-form.tsx` | 表单控件：`TextInput`、`TextAreaInput`、`SelectInput`、`CheckboxInput`、`SwitchInput`、`RadioInput`、`NumberInput`、`DateTimeInput`，统一带标签、说明和校验提示 |
-| `web/src/lib/ui.tsx` | 后台专用组件：`PageHeader`、`Kpi`、`SettingsRow`、`Section`、`Desc`、`Empty`、`FilterTabs`、`Toolbar`、`DataTable`、`Pager`、`Confirm`、`ConfirmDialog`、`Dialog`、`NoteModal` 等；同时转出上面两个文件的全部内容，后台页面只引这一个 |
+| `web/src/lib/ui.tsx` | 后台专用组件：`PageHeader`、`SettingsRow`、`Section`、`Desc`、`Empty`（基于 `EmptyState`）、`FilterTabs`、`Toolbar`、`DataTable`（宽屏是 `DataGrid`，手机是 `ListView`）、`Pager`、`Confirm`、`ConfirmDialog`、`Dialog`、`NoteModal` 等；同时转出上面两个文件的全部内容，后台页面只引这一个 |
 | `web/src/components/brand.tsx` | 页面里的标志（内联 SVG） |
 
-对外页面不引 `ui.tsx`：收银台只引 `ui-base.tsx`，付款自助和登录再加 `ui-form.tsx`，这样不会连带下载后台的表格、分页、弹窗这些组件。
+对外页面不引 `ui.tsx`：收银台只引 `ui-base.tsx`，付款自助和登录再加 `ui-form.tsx`，这样不会连带下载后台的表格、分页、弹窗这些组件和 `admin.css`。
+
+组件库的样式按组件引入（`@import '@yreidev/ui/css/<目录名>.css';`，依赖的组件会一起带上），不整包引 `@yreidev/ui/css`。对外页面也用的写进 `theme.css`，只有后台用的写进 `admin.css`。`admin.css` 只给这些组件的源码生成 Tailwind 工具类，放在 `ui-utilities` 层；这个层在 `theme.css` 开头排在 `utilities` 前面，两边都有的类（比如 `w-full`）以 `theme.css` 为准，不会盖掉页面上的响应式写法（`w-full sm:w-72`）。
 
 ## 交互约定
 
 - **编辑放抽屉**：新建和编辑都在右侧 `Drawer` 里完成。顶部是标题，中间是表单，底部是固定的按钮栏；提交按钮在表单外，用 `form` 属性关联表单。
 - **危险操作要确认**：菜单里触发的删除、重置密钥用 `ConfirmDialog`（居中确认框）；行内按钮用 `Confirm`（确认气泡）；关联、撤销关联、处理异常这类要留痕的操作用 `NoteModal` 填理由，理由记入审计日志。
 - **设置页**：每项一行（`SettingsRow`），左边名称、说明、默认值和可设范围，右边控件。改过才能保存，没改动时保存按钮是灰的，旁边有“撤销修改”；收款参数还能“恢复默认值”。
-- **列表**：宽屏用表格（`DataTable`），手机宽度（640px 以下）换成卡片列表。列表上方用带计数的筛选标签（`FilterTabs`）切换常用视图，比如“待处理异常”“已放弃的通知”。
+- **列表**：宽屏用表格（`DataTable`），手机宽度（640px 以下）换成一行一项的 `ListView`。列表上方用带计数的筛选标签（`FilterTabs`）切换常用视图，比如“待处理异常”“已放弃的通知”。
 - **反馈**：操作结果用右上角的提示消息；页面内需要一直看到的说明和错误用 `Notice`。
 - **输入框底色**：按 HeroUI 的建议，放在卡片、抽屉、弹窗里的输入框用 `secondary` 变体（灰底、无阴影），页面底色上的（比如订单页的筛选栏）用默认白底。`ui-form.tsx` 的控件和 `SearchInput`、`DateRangeInput` 通过 `useFieldVariant()` 读 HeroUI 的 `SurfaceContext` 自动选；页面里直接用 HeroUI 输入组件时自己加 `variant="secondary"`。
 - **必填和选填**：必填项用 `isRequired`（标签后带星号），要给具体提示（格式、范围）时再加 `validate`，它的文字优先于自带提示；选填项在标签后写“（可选）”。
@@ -58,7 +61,7 @@
 
 ### 外壳
 
-- 左侧侧栏宽 240px，可以收成 64px 只显示图标（状态存在 `tillbox-nav-collapsed`）；1024px 以下换成左侧抽屉。
+- 外壳是组件库的 `AppLayout` 加 `Sidebar`：左侧侧栏宽 240px，可以收成 48px 只显示图标（顶栏按钮或 Ctrl/⌘+B，状态存在 `tillbox-nav-collapsed`），收起后待办数显示成小圆点；768px 以下换成左侧抽屉。
 - 菜单按“每天看的、配置的、偶尔用的”分三组：
   - **收款**：概览、订单、流水与异常、通知、AI 与付款申诉
   - **配置**：支付渠道、商户、设置
@@ -75,7 +78,7 @@
 | 概览 | 今天收了多少，有没有要处理的 | 四张指标卡（今日收款、近 7/30 天收款、等待付款、通知重试中）；“待处理”按优先级列出要处理的事，处理完自动消失；收款趋势、查账状态、按商户统计 |
 | 订单 | 找到一笔订单，看它走到哪一步 | 状态标签（等待付款带计数）、渠道和商户筛选、关键词和下单日期搜索；点一行在抽屉里看详情：进度、到账流水、上游预下单、通知记录、相关异常，关闭订单和撤销关联也在这里 |
 | 流水与异常 | 把对不上的钱处理掉 | 顶部是各渠道查账状态；标签切换“待处理异常 / 已处理异常 / 全部流水”；异常一条一张卡片，直接“关联订单”或“标为已处理” |
-| 通知 | 商户有没有收到到账通知 | 顶部画出自动重发的时间表（共 8 次）；标签切换“全部 / 已放弃 / 重试中 / 已送达”；每行用 8 格进度条表示已经发了几次，可以手动重发 |
+| 通知 | 商户有没有收到到账通知 | 顶部画出自动重发的时间表（共 8 次）；标签切换“全部 / 已放弃 / 重试中 / 已送达”；每行用进度条表示 8 次里已经发了几次，可以手动重发 |
 | AI 与付款申诉 | 处理付款人的申诉，管 AI 自动处理 | 顶部是 AI 运行状态和设置入口；标签默认停在“待人工处理”；点一条在抽屉里看 AI 结论、付款人提交的信息、付款人看到的回复，填处理说明后回复结案或重新核查 |
 | 支付渠道 | 配好收款渠道并确认能收钱 | 渠道卡片网格，每张显示能否收款、问题、启停开关、测试连接，上游渠道的支付方式标签带单笔限额，并注明哪些是从上游拒单里自动识别的；新建时先选类型；编辑抽屉顶部是配置清单，逐项打勾，上游渠道可以按支付方式填单笔限额 |
 | 商户 | 接入新商户，给出接入信息 | 表格列出渠道、签名方式、域名白名单、订单数；新建后直接弹出接入信息（接口地址、商户号、密钥、平台公钥）；停用、重置密钥、删除在行末菜单里 |
@@ -92,4 +95,4 @@
 
 ## 体积
 
-公共入口（React、路由、数据请求和 HeroUI 基础部分）约 150 KB（gzip），样式约 44 KB。收银台在此之外只多约 22 KB；付款自助和登录因为要用表单控件（含日期选择），多约 135–145 KB；后台页面按路由拆包，进后台再下载。监控页的趋势图用 ECharts（按需引入柱状图、折线图和 SVG 渲染），这一页约 193 KB（gzip），只有打开监控页才下载。图表组件在 `web/src/components/chart.tsx`：颜色从 HeroUI 的主题变量取（换算成 rgba，ECharts 不认 oklch），切换深浅色时重画。zxing 识别二维码的 wasm 仍然按需加载，不进首屏。
+以下都是 gzip 后的大小。公共入口（React、路由、数据请求和 HeroUI 基础部分）约 150 KB，样式约 44 KB。收银台在此之外只多约 23 KB；付款自助和登录因为要用表单控件（含日期选择），多约 125–145 KB。后台页面按路由拆包，进后台再下载：后台外壳约 320 KB（组件库的侧栏带动画库 motion），`admin.css` 约 11 KB；概览和监控的图表用组件库的 `BarChart`、`ComposedChart`（基于 recharts），recharts 约 105 KB，两页共用，打开其中一页时才下载，颜色直接用 HeroUI 的主题变量，深浅色自动跟随。zxing 识别二维码的 wasm 仍然按需加载，不进首屏。

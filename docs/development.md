@@ -111,7 +111,7 @@ TILLBOX_EPAY_SDK=/path/to/epay-sdk \
 - 装前端依赖（`make build`、`make deps`、`pnpm install`）前，先导出一个能读这个包的令牌：GitHub Packages 只认经典个人令牌（personal access token classic），至少勾 `read:packages`。没有读权限的人从源码构建不了前端，请直接用发布好的镜像（见 [deploy.md](deploy.md)）。
 - 构建镜像时令牌作为构建密钥传入（`docker build --secret id=GITHUB_TOKEN`，`make image` 和 `compose.yaml` 都已带上），只在 `pnpm install` 那一步可见，不留在镜像层里。
 - CI 用工作流自带的 `GITHUB_TOKEN`：包设置里的 “Manage Actions access” 给了本仓库读权限，工作流声明了 `packages: read`。换仓库或 fork 后要重新授权，否则装依赖这一步会报 401/403。
-- 样式：现在只用开源 HeroUI 组件，`web/src/styles/theme.css` 不引组件包的样式。用到组件包自己的组件时，按组件加一行 `@import '@yreidev/ui/css/<目录名>.css';`（不加 layer）；不要整包引 `@yreidev/ui/css`，每个页面的样式表会多 20 KB 左右（gzip），收银台也一样。
+- 样式：组件包自己的组件按组件引样式，一个组件一行 `@import '@yreidev/ui/css/<目录名>.css';`（不加 layer，依赖的组件会一起带上）。对外页面（收银台、付款自助、登录）也用到的写在 `web/src/styles/theme.css`，只有后台用的写在 `web/src/styles/admin.css`（随后台代码按需加载）。不要整包引 `@yreidev/ui/css`，每个页面的样式表会多 20 KB 左右（gzip），收银台也一样。拆分和层的顺序见 [ui.md](ui.md#代码组织)。
 - 组件包缺的组件由维护者加进组件库、发新版本，这里升级后再用，不在本仓库里另写一个。升级：`pnpm --dir web update @yreidev/ui --latest`。
 
 ### HeroUI 代理工具

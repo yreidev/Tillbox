@@ -17,12 +17,11 @@ import {
   Pill,
   Section,
   StateTag,
-  Timeline,
-  stepDot,
+  Events,
   toastError,
   toastOK,
   type StepStatus,
-  type TimelineItem,
+  type EventItem,
 } from '../lib/ui'
 
 interface Detail {
@@ -42,14 +41,14 @@ const upstreamInfoText: Record<UpstreamPayment['info_type'], string> = {
 }
 
 // progress 把订单从下单到通知商户的经过排成时间线。
-function progress(d: Detail, now: number): TimelineItem[] {
+function progress(d: Detail, now: number): EventItem[] {
   const o = d.order
-  const step = (key: string, status: StepStatus, title: string, meta?: string, body?: string): TimelineItem => ({
+  const step = (key: string, status: StepStatus, title: string, meta?: string, body?: string): EventItem => ({
     key,
     title,
     meta,
     children: body,
-    dot: stepDot(status),
+    step: status,
   })
   const items = [
     step(
@@ -242,7 +241,7 @@ export function OrderDetail({ id, onClose }: { id: number | null; onClose: () =>
                   </Notice>
                 )}
                 <Section title="进度">
-                  <Timeline items={progress(d, now)} />
+                  <Events items={progress(d, now)} />
                 </Section>
 
                 <Section title="订单信息">
@@ -325,21 +324,27 @@ export function OrderDetail({ id, onClose }: { id: number | null; onClose: () =>
 
                 {d.anomalies.length > 0 && (
                   <Section title="相关异常">
-                    <ul className="flex flex-col gap-2">
-                      {d.anomalies.map((a) => (
-                        <li key={a.id} className="rounded-xl border border-separator p-3 text-sm">
-                          <div className="flex flex-wrap items-center gap-2">
+                    <Events
+                      items={d.anomalies.map((a) => ({
+                        key: a.id,
+                        tone: a.status === 'open' ? 'warning' : 'default',
+                        title: (
+                          <span className="flex flex-wrap items-center gap-2">
                             <Pill tone={a.status === 'open' ? 'warning' : 'default'}>{anomalyText[a.kind]}</Pill>
-                            <span className="text-xs text-muted">
+                            <span className="text-xs font-normal text-muted">
                               {a.status === 'open' ? '待处理' : `${a.resolved_by} 已处理`}
                             </span>
-                            <span className="tb-num ms-auto text-xs text-muted">{time(a.created_at, false)}</span>
-                          </div>
-                          <p className="mt-2">{a.detail}</p>
-                          {a.note && <p className="mt-1 text-xs text-muted">处理说明：{a.note}</p>}
-                        </li>
-                      ))}
-                    </ul>
+                          </span>
+                        ),
+                        meta: time(a.created_at, false),
+                        children: (
+                          <>
+                            <p className="text-foreground">{a.detail}</p>
+                            {a.note && <p className="mt-0.5 text-xs">处理说明：{a.note}</p>}
+                          </>
+                        ),
+                      }))}
+                    />
                   </Section>
                 )}
 
@@ -364,34 +369,24 @@ export function OrderDetail({ id, onClose }: { id: number | null; onClose: () =>
                   {d.attempts.length === 0 ? (
                     <p className="text-sm text-muted">{d.notification ? '还没发过。' : '付款后才会通知商户。'}</p>
                   ) : (
-                    <ul className="flex flex-col divide-y divide-separator">
-                      {d.attempts.map((a) => (
-                        <li key={a.id} className="flex items-start gap-3 py-2.5 first:pt-0 last:pb-0">
-                          <span
-                            className={
-                              a.success
-                                ? 'mt-1.5 size-2 shrink-0 rounded-full bg-success'
-                                : 'mt-1.5 size-2 shrink-0 rounded-full bg-danger'
-                            }
-                          />
-                          <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center gap-x-2 text-sm">
-                              <span className="font-medium">{a.success ? '商户已确认' : '失败'}</span>
-                              {a.manual && <Pill>手动</Pill>}
-                              <span className="tb-num ms-auto text-xs text-muted">
-                                {time(a.created_at)} · {a.duration_ms} 毫秒
-                              </span>
-                            </div>
-                            <p
-                              className="mt-0.5 line-clamp-2 text-xs break-all text-muted"
-                              title={a.error || a.response}
-                            >
-                              {a.error || `HTTP ${a.http_status}${a.response ? `：${a.response}` : ''}`}
-                            </p>
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
+                    <Events
+                      items={d.attempts.map((a) => ({
+                        key: a.id,
+                        tone: a.success ? 'success' : 'danger',
+                        title: (
+                          <span className="flex flex-wrap items-center gap-2">
+                            {a.success ? '商户已确认' : '失败'}
+                            {a.manual && <Pill>手动</Pill>}
+                          </span>
+                        ),
+                        meta: `${time(a.created_at)} · ${a.duration_ms} 毫秒`,
+                        children: (
+                          <p className="line-clamp-2 text-xs break-all" title={a.error || a.response}>
+                            {a.error || `HTTP ${a.http_status}${a.response ? `：${a.response}` : ''}`}
+                          </p>
+                        ),
+                      }))}
+                    />
                   )}
                 </Section>
 

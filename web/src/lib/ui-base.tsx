@@ -1,8 +1,8 @@
-// 对外页面和后台都用的基础小组件：提示条、标签、卡片、步骤圆点、复制。只依赖少量 HeroUI 组件，
+// 对外页面和后台都用的基础小组件：提示条、标签、卡片、步骤时间线、复制。只依赖少量 HeroUI 组件，
 // 收银台只引这个文件，不会连带下载后台的表格、分页这些组件。规范见 docs/ui.md。
 import type { ReactNode } from 'react'
-import { Alert, Button, Card, Chip, linkVariants, toast, type Key } from '@yreidev/ui'
-import { CircleCheckFill, CircleXmarkFill, Copy } from '@gravity-ui/icons'
+import { Alert, Button, Card, Chip, Timeline, linkVariants, toast, type Key, type TimelineStatus } from '@yreidev/ui'
+import { Check, Copy, Xmark } from '@gravity-ui/icons'
 
 /** cx 拼接 className，跳过空值。 */
 export const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(' ')
@@ -186,52 +186,57 @@ export const linkClass = linkVariants().base()
 
 export type StepStatus = 'done' | 'current' | 'wait' | 'error'
 
-/** stepDot 是步骤条每一步前面的圆点：完成打勾、进行中实心、未开始空心、出错打叉。 */
-export function stepDot(status: StepStatus) {
-  switch (status) {
-    case 'done':
-      return <CircleCheckFill className="size-5 text-success" />
-    case 'error':
-      return <CircleXmarkFill className="size-5 text-danger" />
-    case 'current':
-      return <span className="size-3 rounded-full bg-accent ring-4 ring-accent-soft" />
-    default:
-      return <span className="size-3 rounded-full border-2 border-border" />
-  }
+/** 步骤状态对应的时间线色调：完成绿色、进行中强调色、未开始变淡、出错红色。 */
+export const stepStatus: Record<StepStatus, TimelineStatus> = {
+  done: 'success',
+  current: 'current',
+  wait: 'muted',
+  error: 'danger',
 }
 
-export interface TimelineItem {
+const toneStatus: Record<Tone, TimelineStatus> = {
+  default: 'default',
+  accent: 'current',
+  success: 'success',
+  warning: 'warning',
+  danger: 'danger',
+}
+
+/** stepIcon 是步骤标记里的图标：完成打勾、出错打叉，其余留空。 */
+export function stepIcon(status: StepStatus) {
+  if (status === 'done') return <Check />
+  if (status === 'error') return <Xmark />
+  return null
+}
+
+export interface EventItem {
   key: Key
   title: ReactNode
   /** 标题右侧的小字（时间） */
   meta?: ReactNode
   children?: ReactNode
+  /** 按步骤显示：完成打勾、出错打叉 */
+  step?: StepStatus
+  /** 不是步骤时标记的色调 */
   tone?: Tone
-  /** 替换默认的圆点，比如 stepDot(...) */
-  dot?: ReactNode
 }
 
-/** Timeline 是竖排的步骤或事件记录，用一条细线把圆点串起来。 */
-export function Timeline({ items, className }: { items: TimelineItem[]; className?: string }) {
+/** Events 用 Timeline 排出竖排的步骤或事件记录，标题右侧可带时间。 */
+export function Events({ items, className }: { items: EventItem[]; className?: string }) {
   return (
-    <ol className={cx('flex flex-col', className)}>
-      {items.map((it, i) => (
-        <li key={it.key} className="relative flex gap-3 pb-5 last:pb-0">
-          {i < items.length - 1 && (
-            <span aria-hidden className="absolute top-7 bottom-1 left-[11.5px] w-px bg-separator" />
-          )}
-          <span className="grid size-6 shrink-0 place-items-center">
-            {it.dot ?? <span className={cx('size-2.5 rounded-full', toneDot[it.tone ?? 'default'])} />}
-          </span>
-          <div className="min-w-0 flex-1 pt-0.5">
+    <Timeline size="sm" density="compact" className={className}>
+      {items.map((it) => (
+        <Timeline.Item key={it.key} status={it.step ? stepStatus[it.step] : toneStatus[it.tone ?? 'default']}>
+          <Timeline.Marker aria-hidden>{it.step && stepIcon(it.step)}</Timeline.Marker>
+          <Timeline.Content className="gap-1 pt-px">
             <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
               <span className="text-sm font-medium">{it.title}</span>
               {it.meta && <span className="tb-num text-xs text-muted">{it.meta}</span>}
             </div>
-            {it.children && <div className="mt-1 text-sm text-muted">{it.children}</div>}
-          </div>
-        </li>
+            {it.children && <div className="text-sm text-muted">{it.children}</div>}
+          </Timeline.Content>
+        </Timeline.Item>
       ))}
-    </ol>
+    </Timeline>
   )
 }

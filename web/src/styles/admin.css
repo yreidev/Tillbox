@@ -1,0 +1,17 @@
+/*
+ * 只有后台用到的 @yreidev/ui 组件样式。由 lib/ui.tsx 引入（只有后台的代码引用它），随后台页面的代码按需加载，
+ * 收银台、付款自助页和登录页不下载。对外页面也用到的组件写在 theme.css 里。
+ * 下面的 utilities 只生成这些组件源码里用到的工具类（source(none) 关掉自动扫描，@source 在各个入口文件里），
+ * 放进 ui-utilities 层：这个层排在 theme.css 的 utilities 前面，同名的类不会盖掉页面自己的写法。
+ */
+@reference './theme.css';
+@import 'tailwindcss/utilities' layer(ui-utilities) source(none);
+@import '@yreidev/ui/css/app-layout.css';
+@import '@yreidev/ui/css/bar-chart.css';
+@import '@yreidev/ui/css/composed-chart.css';
+@import '@yreidev/ui/css/data-grid.css';
+@import '@yreidev/ui/css/empty-state.css';
+@import '@yreidev/ui/css/kpi.css';
+@import '@yreidev/ui/css/list-view.css';
+@import '@yreidev/ui/css/navbar.css';
+@import '@yreidev/ui/css/segment.css';

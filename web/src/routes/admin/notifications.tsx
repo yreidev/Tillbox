@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useState, type CSSProperties } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Card, Tooltip } from '@yreidev/ui'
+import { Button, Card, ProgressBar, Stepper, Tooltip } from '@yreidev/ui'
 import { ArrowRotateRight, Xmark } from '@gravity-ui/icons'
 import { OrderDetail } from '../../components/order-detail'
 import { api, overviewQuery, query } from '../../lib/api'
@@ -18,7 +18,6 @@ import {
   PageHeader,
   Stack,
   StatusDot,
-  cx,
   toastError,
   toastOK,
   type Tone,
@@ -213,6 +212,12 @@ function host(url: string) {
   }
 }
 
+/** 最后一格“放弃”用红色。 */
+const giveUpStep = {
+  '--stepper-inactive-border': 'var(--color-danger)',
+  '--stepper-inactive-fg': 'var(--color-danger)',
+} as CSSProperties
+
 // ScheduleCard 把 8 次自动通知的时间点画成一条线，最后一格是放弃。
 function ScheduleCard() {
   return (
@@ -221,47 +226,51 @@ function ScheduleCard() {
         <span className="text-sm font-medium">自动重发计划</span>
         <span className="text-xs text-muted">时间从第一次通知算起；8 次都没送达就放弃，需要你手动重发</span>
       </div>
-      <ol className="-mx-1 flex overflow-x-auto px-1 pb-1">
-        {schedule.map((s, i) => (
-          <li
-            key={s}
-            className="relative flex min-w-16 flex-1 flex-col items-center gap-1.5 before:absolute before:top-3 before:right-1/2 before:h-px before:w-full before:bg-separator first:before:hidden"
-          >
-            <span className="tb-num relative grid size-6 place-items-center rounded-full bg-accent-soft text-xs font-medium text-accent-soft-foreground">
-              {i + 1}
-            </span>
-            <span className="text-xs whitespace-nowrap text-muted">{s}</span>
-          </li>
-        ))}
-        <li className="relative flex min-w-16 flex-1 flex-col items-center gap-1.5 before:absolute before:top-3 before:right-1/2 before:h-px before:w-full before:border-t before:border-dashed before:border-separator">
-          <span className="relative grid size-6 place-items-center rounded-full bg-danger-soft text-danger-soft-foreground">
-            <Xmark className="size-3.5" />
-          </span>
-          <span className="text-xs whitespace-nowrap text-muted">放弃</span>
-        </li>
-      </ol>
+      <div className="-mx-1 overflow-x-auto px-1 pb-1">
+        <Stepper aria-label="自动重发计划" size="sm" currentStep={-1} className="min-w-[36rem]">
+          {schedule.map((s) => (
+            <Stepper.Step key={s}>
+              <Stepper.Indicator className="tb-num" />
+              <Stepper.Content>
+                <Stepper.Title className="whitespace-nowrap">{s}</Stepper.Title>
+              </Stepper.Content>
+              <Stepper.Separator />
+            </Stepper.Step>
+          ))}
+          <Stepper.Step style={giveUpStep}>
+            <Stepper.Indicator>
+              <Stepper.Icon>
+                <Xmark />
+              </Stepper.Icon>
+            </Stepper.Indicator>
+            <Stepper.Content>
+              <Stepper.Title>放弃</Stepper.Title>
+            </Stepper.Content>
+          </Stepper.Step>
+        </Stepper>
+      </div>
     </Card>
   )
 }
 
-// Attempts 用 8 小格表示自动通知用掉了几次；悬停看每次的时间点。
+// Attempts 用进度条表示 8 次自动通知用掉了几次；悬停看第一次的时间。
 function Attempts({ n }: { n: NotificationView }) {
   const used = Math.min(n.attempts, schedule.length)
-  const fill = n.status === 'success' ? 'bg-success' : n.status === 'dead' ? 'bg-danger' : 'bg-warning'
   return (
     <Tooltip delay={200} closeDelay={0}>
       <Tooltip.Trigger className="inline-flex items-center gap-2" tabIndex={-1} role="presentation">
-        <span className="flex gap-0.5" aria-hidden>
-          {schedule.map((s, i) => (
-            <span
-              key={s}
-              className={cx(
-                'h-2 w-2.5 rounded-sm',
-                i < used ? fill : i === used && n.status === 'pending' ? 'bg-accent/40' : 'bg-default',
-              )}
-            />
-          ))}
-        </span>
+        <ProgressBar
+          aria-label="已自动通知次数"
+          size="sm"
+          color={n.status === 'success' ? 'success' : n.status === 'dead' ? 'danger' : 'warning'}
+          value={used}
+          maxValue={schedule.length}
+          className="w-16"
+        >
+          <ProgressBar.Track>
+            <ProgressBar.Fill />
+          </ProgressBar.Track>
+        </ProgressBar>
         <span className="tb-num text-xs text-muted">
           {used}/{schedule.length}
         </span>

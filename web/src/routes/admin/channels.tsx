@@ -15,6 +15,7 @@ import {
   Input,
   Label,
   ListBox,
+  ProgressBar,
   Skeleton,
   Switch,
   toast,
@@ -44,6 +45,7 @@ import {
   Confirm,
   ConfirmDialog,
   Copyable,
+  Events,
   Notice,
   PageHeader,
   Pill,
@@ -54,7 +56,6 @@ import {
   TextAreaInput,
   TextInput,
   cx,
-  stepDot,
   toastError,
   toastOK,
   type StepStatus,
@@ -526,35 +527,34 @@ function Checklist({ steps }: { steps: Step[] }) {
   const status = (s: Step, i: number): StepStatus =>
     s.done ? 'done' : s.error ? 'error' : i === current ? 'current' : 'wait'
   return (
-    <section className="rounded-2xl border border-separator p-4">
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="text-sm font-semibold">接入清单</h3>
-        <span className="tb-num text-xs text-muted">
-          已完成 {done}/{steps.length}
-        </span>
-      </div>
-      <div className="mt-2 h-1 overflow-hidden rounded-full bg-default" aria-hidden>
-        <div
-          className="h-full rounded-full bg-success transition-[width]"
-          style={{ width: `${(done / steps.length) * 100}%` }}
-        />
-      </div>
-      <ol className="mt-4 flex flex-col gap-3">
-        {steps.map((s, i) => {
+    <section className="flex flex-col gap-4 rounded-2xl border border-separator p-4">
+      <ProgressBar
+        size="sm"
+        color="success"
+        value={done}
+        maxValue={steps.length}
+        valueLabel={`已完成 ${done}/${steps.length}`}
+      >
+        <Label className="text-sm font-semibold">接入清单</Label>
+        <ProgressBar.Output className="tb-num text-xs text-muted" />
+        <ProgressBar.Track>
+          <ProgressBar.Fill />
+        </ProgressBar.Track>
+      </ProgressBar>
+      <Events
+        items={steps.map((s, i) => {
           const st = status(s, i)
-          return (
-            <li key={i} className="flex gap-3">
-              <span className="grid size-5 shrink-0 place-items-center">{stepDot(st)}</span>
-              <div className="min-w-0">
-                <p className={cx('text-sm', st === 'done' ? 'text-muted' : 'font-medium')}>{s.title}</p>
-                {s.description && st !== 'done' && (
-                  <p className={cx('mt-0.5 text-xs', st === 'error' ? 'text-danger' : 'text-muted')}>{s.description}</p>
-                )}
-              </div>
-            </li>
-          )
+          return {
+            key: i,
+            step: st,
+            title: <span className={st === 'done' ? 'font-normal text-muted' : undefined}>{s.title}</span>,
+            children:
+              s.description && st !== 'done' ? (
+                <span className={st === 'error' ? 'text-danger' : undefined}>{s.description}</span>
+              ) : undefined,
+          }
         })}
-      </ol>
+      />
     </section>
   )
 }

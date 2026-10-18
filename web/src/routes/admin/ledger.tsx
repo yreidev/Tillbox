@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Card } from '@yreidev/ui'
+import { Button, ItemCard, ItemCardGroup, Separator } from '@yreidev/ui'
 import { CircleCheck, Link as LinkIcon } from '@gravity-ui/icons'
 import { LedgerRow } from '../../components/ledger-status'
 import { OrderDetail } from '../../components/order-detail'
@@ -195,7 +195,7 @@ function Anomalies({ search, resolved }: { search: Search; resolved: boolean }) 
         />
       </Toolbar>
       {q.isError && <Notice status="danger">{q.error.message}</Notice>}
-      <Card className="gap-0 rounded-2xl p-0">
+      <ItemCardGroup>
         {q.isPending ? (
           <Loading />
         ) : items.length === 0 ? (
@@ -209,13 +209,14 @@ function Anomalies({ search, resolved }: { search: Search; resolved: boolean }) 
             />
           )
         ) : (
-          <ul className="divide-y divide-separator">
-            {items.map((a) => {
-              const t = a.transaction
-              const canLink = !resolved && !!t && t.direction === 'in' && t.order_id === 0
-              return (
-                <li key={a.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start">
-                  <div className="min-w-0 flex-1">
+          items.map((a, i) => {
+            const t = a.transaction
+            const canLink = !resolved && !!t && t.direction === 'in' && t.order_id === 0
+            return (
+              <Fragment key={a.id}>
+                {i > 0 && <Separator />}
+                <ItemCard className="flex-col items-stretch sm:flex-row sm:items-start">
+                  <ItemCard.Content className="gap-1.5">
                     <div className="flex flex-wrap items-center gap-2">
                       <Pill tone={resolved ? 'default' : 'warning'}>{anomalyText[a.kind]}</Pill>
                       <span className="tb-num text-xs text-muted">{time(a.created_at)}</span>
@@ -225,22 +226,22 @@ function Anomalies({ search, resolved }: { search: Search; resolved: boolean }) 
                         </span>
                       )}
                     </div>
-                    <p className="mt-1.5 text-sm">{a.detail}</p>
+                    <p className="text-sm">{a.detail}</p>
                     {t && (
-                      <p className="mt-1 text-xs text-muted">
+                      <p className="text-xs text-muted">
                         <span className="tb-num font-medium text-foreground">¥{yuan(t.amount)}</span> ·{' '}
                         {t.other_account || '付款方未知'} · <span className="tb-num">{time(t.occurred_at)}</span> · 流水{' '}
                         <Mono>{t.external_id}</Mono>
                       </p>
                     )}
                     {resolved && (
-                      <p className="mt-2 rounded-lg bg-default/60 px-3 py-2 text-xs text-muted">
+                      <p className="mt-0.5 rounded-lg bg-default/60 px-3 py-2 text-xs text-muted">
                         {a.resolved_by} 于 <span className="tb-num">{time(a.resolved_at)}</span> 处理：{a.note}
                       </p>
                     )}
-                  </div>
+                  </ItemCard.Content>
                   {!resolved && (
-                    <div className="flex shrink-0 gap-2">
+                    <ItemCard.Action className="ms-0 flex gap-2 ps-0 sm:ms-auto sm:ps-2">
                       {canLink && (
                         <Button size="sm" onPress={() => setLinking(t)}>
                           <LinkIcon />
@@ -250,14 +251,14 @@ function Anomalies({ search, resolved }: { search: Search; resolved: boolean }) 
                       <Button size="sm" variant={canLink ? 'tertiary' : 'secondary'} onPress={() => setResolving(a)}>
                         标为已处理
                       </Button>
-                    </div>
+                    </ItemCard.Action>
                   )}
-                </li>
-              )
-            })}
-          </ul>
+                </ItemCard>
+              </Fragment>
+            )
+          })
         )}
-      </Card>
+      </ItemCardGroup>
       {q.data && q.data.total > pageSize && (
         <Pager
           page={search.page ?? 1}

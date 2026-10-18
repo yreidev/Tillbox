@@ -1,16 +1,17 @@
 // 页面共用的小组件和工具：把 HeroUI 组件常用的组合方式包一层，页面里直接用，不重复拼装。规范见 docs/ui.md。
 // 基础组件在 ui-base.tsx、表单控件在 ui-form.tsx，这里一并导出；对外页面直接引那两个文件，少下载后台专用的组件。
-import { useEffect, useState, type ReactElement, type ReactNode } from 'react'
+import { useEffect, useState, type CSSProperties, type ReactElement, type ReactNode } from 'react'
 import {
   AlertDialog,
   Button,
-  Card,
   Chip,
+  DataGrid,
   DateField,
   DateRangePicker,
   EmptyState,
   Label,
   Link,
+  ListView,
   Modal,
   Pagination,
   Popover,
@@ -18,16 +19,15 @@ import {
   SearchField,
   Skeleton,
   Spinner,
-  Table,
   Tabs,
-  ToggleButton,
-  ToggleButtonGroup,
+  type DataGridColumn,
   type Key,
 } from '@yreidev/ui'
 import { Tray, Xmark } from '@gravity-ui/icons'
 import { fromDate, getLocalTimeZone, toCalendarDate } from '@internationalized/date'
 import { yuan } from './format'
 import type { OrderState } from './types'
+import '../styles/admin.css'
 import { stateColor, stateText } from './types'
 import { cx, toastError, Pill, type Tone } from './ui-base'
 import { TextAreaInput, useFieldVariant, type FieldProps } from './ui-form'
@@ -91,59 +91,6 @@ export function PageHeader({
       )}
       {children}
     </div>
-  )
-}
-
-const kpiTone: Record<Tone, string> = {
-  default: 'bg-default text-default-foreground',
-  accent: 'bg-accent-soft text-accent-soft-foreground',
-  success: 'bg-success-soft text-success-soft-foreground',
-  warning: 'bg-warning-soft text-warning-soft-foreground',
-  danger: 'bg-danger-soft text-danger-soft-foreground',
-}
-
-/** Kpi 是一个关键数字：名称、数值、底部一行补充；tone 不是 default 时数值和图标跟着变色，提醒去处理。 */
-export function Kpi({
-  label,
-  value,
-  unit,
-  icon,
-  tone = 'default',
-  foot,
-  className,
-}: {
-  label: ReactNode
-  value: ReactNode
-  unit?: ReactNode
-  icon?: ReactNode
-  tone?: Tone
-  foot?: ReactNode
-  className?: string
-}) {
-  return (
-    <Card className={cx('min-w-0 gap-1 rounded-2xl', className)}>
-      <div className="flex items-center justify-between gap-2">
-        <span className="truncate text-sm font-medium text-muted">{label}</span>
-        {icon && (
-          <span className={cx('grid size-8 shrink-0 place-items-center rounded-xl [&>svg]:size-4', kpiTone[tone])}>
-            {icon}
-          </span>
-        )}
-      </div>
-      <div className="flex items-baseline gap-1.5">
-        <span
-          className={cx(
-            'tb-num text-2xl font-semibold tracking-tight',
-            tone === 'warning' && 'text-warning',
-            tone === 'danger' && 'text-danger',
-          )}
-        >
-          {value}
-        </span>
-        {unit && <span className="text-sm text-muted">{unit}</span>}
-      </div>
-      {foot && <div className="mt-auto pt-1 text-xs text-muted">{foot}</div>}
-    </Card>
   )
 }
 
@@ -229,11 +176,13 @@ export function Empty({
   className?: string
 }) {
   return (
-    <EmptyState className={cx('flex flex-col items-center justify-center gap-2 px-4 py-8 text-center', className)}>
-      <span className="text-muted [&>svg]:size-6">{icon ?? <Tray />}</span>
-      {title && <p className="font-medium">{title}</p>}
-      {description && <p className="text-sm text-muted">{description}</p>}
-      {children}
+    <EmptyState size="sm" className={className}>
+      <EmptyState.Header>
+        <EmptyState.Media variant="icon">{icon ?? <Tray />}</EmptyState.Media>
+        {title && <EmptyState.Title>{title}</EmptyState.Title>}
+        {description && <EmptyState.Description>{description}</EmptyState.Description>}
+      </EmptyState.Header>
+      {children && <EmptyState.Content>{children}</EmptyState.Content>}
     </EmptyState>
   )
 }
@@ -251,43 +200,6 @@ export function PageSkeleton({ rows = 3 }: { rows?: number }) {
         <Skeleton key={i} className="h-40 rounded-2xl" />
       ))}
     </div>
-  )
-}
-
-/** Segmented 是一排互斥的切换按钮（近 7 天 / 近 30 天这类）。 */
-export function Segmented<V extends string>({
-  value,
-  onChange,
-  options,
-  ariaLabel,
-  className,
-}: {
-  value: V
-  onChange: (v: V) => void
-  options: { value: V; label: ReactNode }[]
-  ariaLabel: string
-  className?: string
-}) {
-  return (
-    <ToggleButtonGroup
-      aria-label={ariaLabel}
-      size="sm"
-      className={className}
-      selectionMode="single"
-      disallowEmptySelection
-      selectedKeys={new Set([value])}
-      onSelectionChange={(keys) => {
-        const v = [...keys][0]
-        if (v !== undefined) onChange(String(v) as V)
-      }}
-    >
-      {options.map((o, i) => (
-        <ToggleButton key={o.value} id={o.value}>
-          {i > 0 && <ToggleButtonGroup.Separator />}
-          {o.label}
-        </ToggleButton>
-      ))}
-    </ToggleButtonGroup>
   )
 }
 
@@ -365,14 +277,12 @@ export function Loading({ className }: { className?: string }) {
 
 export interface Column<T> {
   title: ReactNode
-  render: (row: T, index: number) => ReactNode
+  render: (row: T) => ReactNode
   align?: 'right' | 'center'
   /** 单元格不换行（时间、金额） */
   nowrap?: boolean
   className?: string
 }
-
-const alignClass = { right: 'text-right', center: 'text-center' }
 
 /** useMediaQuery 跟踪一个媒体查询是否命中（窗口宽度变化时更新）。 */
 export function useMediaQuery(q: string) {
@@ -388,9 +298,9 @@ export function useMediaQuery(q: string) {
 }
 
 /**
- * DataTable 用列定义渲染 HeroUI 表格。minWidth 是表格的最小宽度，放不下时横向滚动；
+ * DataTable 用列定义渲染 DataGrid。minWidth 是表格的最小宽度，放不下时横向滚动；
  * onRowClick 让整行可点（键盘回车也行）；pagination 在总数超过一页时显示分页。
- * 给了 card 时，手机宽度下不画表格，改成一行一张的卡片列表（card 渲染每张卡片的内容）。
+ * 给了 card 时，手机宽度下不画表格，改成一行一项的 ListView（card 渲染每项的内容）。
  */
 export function DataTable<T>({
   label,
@@ -429,72 +339,55 @@ export function DataTable<T>({
   if (card && phone) {
     return (
       <div className={cx('flex flex-col gap-3', className)}>
-        <div className="overflow-hidden rounded-2xl bg-surface shadow-surface">
-          {rows.length === 0 ? (
-            emptyNode
-          ) : (
-            <ul aria-label={label} className="divide-y divide-separator">
-              {rows.map((r) => (
-                <li key={rowKey(r)}>
-                  {onRowClick ? (
-                    <button
-                      type="button"
-                      className="block w-full px-4 py-3 text-left outline-none focus-visible:bg-default active:bg-default"
-                      onClick={() => onRowClick(r)}
-                    >
-                      {card(r)}
-                    </button>
-                  ) : (
-                    <div className="px-4 py-3">{card(r)}</div>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+        <ListView aria-label={label} renderEmptyState={() => emptyNode}>
+          {rows.map((r) => (
+            <ListView.Item
+              key={rowKey(r)}
+              id={rowKey(r)}
+              textValue={String(rowKey(r))}
+              onAction={onRowClick ? () => onRowClick(r) : undefined}
+            >
+              <div className="min-w-0 flex-1">{card(r)}</div>
+            </ListView.Item>
+          ))}
+        </ListView>
         {pager}
       </div>
     )
   }
+  const grid = (
+    <DataGrid
+      aria-label={label}
+      className={cx(onRowClick && '[&_.table__row]:cursor-pointer', className)}
+      contentClassName={minWidth ? 'min-w-(--table-min-width)' : undefined}
+      data={rows}
+      getRowId={rowKey}
+      columns={columns.map((c, i): DataGridColumn<T> => ({
+        id: `c${i}`,
+        header: c.title,
+        cell: (r) => c.render(r),
+        isRowHeader: i === 0,
+        align: c.align === 'right' ? 'end' : c.align,
+        headerClassName: 'whitespace-nowrap',
+        cellClassName: cx(c.nowrap && 'whitespace-nowrap', c.className) || undefined,
+      }))}
+      onRowAction={
+        onRowClick
+          ? (key) => {
+              const row = rows.find((r) => rowKey(r) === key)
+              if (row) onRowClick(row)
+            }
+          : undefined
+      }
+      renderEmptyState={() => emptyNode}
+      footer={pager || undefined}
+    />
+  )
+  if (!minWidth) return grid
   return (
-    <Table className={className}>
-      <Table.ScrollContainer>
-        <Table.Content aria-label={label} style={minWidth ? { minWidth } : undefined}>
-          <Table.Header>
-            {columns.map((c, i) => (
-              <Table.Column
-                key={i}
-                id={`c${i}`}
-                isRowHeader={i === 0}
-                className={cx('whitespace-nowrap', c.align && alignClass[c.align])}
-              >
-                {c.title}
-              </Table.Column>
-            ))}
-          </Table.Header>
-          <Table.Body renderEmptyState={() => emptyNode}>
-            {rows.map((r, idx) => (
-              <Table.Row
-                key={rowKey(r)}
-                id={rowKey(r)}
-                className={onRowClick && 'cursor-pointer'}
-                onAction={onRowClick ? () => onRowClick(r) : undefined}
-              >
-                {columns.map((c, i) => (
-                  <Table.Cell
-                    key={i}
-                    className={cx(c.align && alignClass[c.align], c.nowrap && 'whitespace-nowrap', c.className)}
-                  >
-                    {c.render(r, idx)}
-                  </Table.Cell>
-                ))}
-              </Table.Row>
-            ))}
-          </Table.Body>
-        </Table.Content>
-      </Table.ScrollContainer>
-      {pager && <Table.Footer>{pager}</Table.Footer>}
-    </Table>
+    <div className="contents" style={{ '--table-min-width': `${minWidth}px` } as CSSProperties}>
+      {grid}
+    </div>
   )
 }
 

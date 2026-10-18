@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useState, type CSSProperties } from 'react'
 import { createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Card, Form } from '@yreidev/ui'
-import { ArrowUpRightFromSquare, CircleCheck, Flask } from '@gravity-ui/icons'
+import { Button, Card, Form, ListView, Stepper } from '@yreidev/ui'
+import { ArrowUpRightFromSquare, CircleCheck, Flask, Xmark } from '@gravity-ui/icons'
 import { api, channelsQuery } from '../../lib/api'
 import { relative, time, yuan } from '../../lib/format'
 import type { Merchant, Notification, NotifyAttempt, Order, OrderView, Page, Transaction } from '../../lib/types'
@@ -20,7 +20,6 @@ import {
   StateTag,
   TextInput,
   cx,
-  stepDot,
   toastError,
   toastOK,
   type StepStatus,
@@ -28,6 +27,9 @@ import {
 import { OrderDetail } from '../../components/order-detail'
 
 export const Route = createFileRoute('/admin/payment-test')({ component: PaymentTestPage })
+
+/** 出错的那一步改用红色。 */
+const dangerStep = { '--stepper-active-color': 'var(--color-danger)' } as CSSProperties
 
 /** 最近测试单默认显示的笔数，其余点“显示全部”展开。 */
 const recentShown = 6
@@ -157,45 +159,52 @@ function PaymentTestPage() {
             ) : recent.length === 0 ? (
               <Empty description="还没有测试单" />
             ) : (
-              <ul className="flex flex-col px-2 pb-2">
-                {(showAll ? recent : recent.slice(0, recentShown)).map((r) => (
-                  <li key={r.id}>
-                    <button
-                      type="button"
-                      onClick={() => pick(r.id)}
-                      aria-current={selected === r.id || undefined}
-                      className={cx(
-                        'flex w-full items-center gap-3 rounded-xl px-2 py-2.5 text-left outline-none hover:bg-default focus-visible:ring-2 focus-visible:ring-focus',
-                        selected === r.id && 'bg-default',
-                      )}
+              <div className="px-2 pb-2">
+                <ListView
+                  aria-label="最近的测试单"
+                  variant="secondary"
+                  selectionMode="single"
+                  selectionBehavior="replace"
+                  disallowEmptySelection
+                  selectedKeys={selected === null ? [] : [selected]}
+                  onSelectionChange={(keys) => {
+                    const [k] = keys === 'all' ? [] : keys
+                    if (k != null) pick(Number(k))
+                  }}
+                >
+                  {(showAll ? recent : recent.slice(0, recentShown)).map((r) => (
+                    <ListView.Item
+                      key={r.id}
+                      id={r.id}
+                      textValue={`${r.merchant_name || `商户 ${r.merchant_id}`} ${yuan(r.pay_amount)} 元`}
                     >
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-baseline justify-between gap-3">
-                          <span className="truncate text-sm">{r.merchant_name || `商户 ${r.merchant_id}`}</span>
-                          <span className="tb-num shrink-0 text-sm font-medium">¥{yuan(r.pay_amount)}</span>
+                      <ListView.ItemContent className="flex-1">
+                        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                          <div className="flex items-baseline justify-between gap-3">
+                            <ListView.Title>{r.merchant_name || `商户 ${r.merchant_id}`}</ListView.Title>
+                            <span className="tb-num shrink-0 text-sm font-medium">¥{yuan(r.pay_amount)}</span>
+                          </div>
+                          <div className="flex items-center justify-between gap-3">
+                            <ListView.Description className="tb-num">{time(r.created_at, false)}</ListView.Description>
+                            <StateTag state={r.state} />
+                          </div>
                         </div>
-                        <div className="mt-0.5 flex items-center justify-between gap-3">
-                          <span className="tb-num truncate text-xs text-muted">{time(r.created_at, false)}</span>
-                          <StateTag state={r.state} />
-                        </div>
-                      </div>
-                    </button>
-                  </li>
-                ))}
+                      </ListView.ItemContent>
+                    </ListView.Item>
+                  ))}
+                </ListView>
                 {recent.length > recentShown && (
-                  <li className="pt-1">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      fullWidth
-                      className="text-muted"
-                      onPress={() => setShowAll((x) => !x)}
-                    >
-                      {showAll ? '收起' : `显示全部 ${recent.length} 笔`}
-                    </Button>
-                  </li>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    fullWidth
+                    className="mt-1 text-muted"
+                    onPress={() => setShowAll((x) => !x)}
+                  >
+                    {showAll ? '收起' : `显示全部 ${recent.length} 笔`}
+                  </Button>
                 )}
-              </ul>
+              </div>
             )}
           </Panel>
         </div>
@@ -203,16 +212,17 @@ function PaymentTestPage() {
           {selected === null ? (
             <Card className="rounded-2xl">
               <Empty icon={<Flask />} title="还没选测试单" description="新建一笔，或点一笔最近的测试单看进度。">
-                <ol className="mt-4 grid w-full max-w-md gap-3 text-left text-sm sm:grid-cols-3">
-                  {['选商户和金额', '在收银台付款', '本站接收回调并验签'].map((t, i) => (
-                    <li key={t} className="flex items-center gap-2 rounded-xl bg-default/60 px-3 py-2.5">
-                      <span className="tb-num grid size-5 shrink-0 place-items-center rounded-full bg-accent-soft text-xs text-accent-soft-foreground">
-                        {i + 1}
-                      </span>
-                      {t}
-                    </li>
+                <Stepper aria-label="测试步骤" size="sm" currentStep={0} className="w-full max-w-md">
+                  {['选商户和金额', '在收银台付款', '本站接收回调并验签'].map((t) => (
+                    <Stepper.Step key={t}>
+                      <Stepper.Indicator />
+                      <Stepper.Content>
+                        <Stepper.Title>{t}</Stepper.Title>
+                      </Stepper.Content>
+                      <Stepper.Separator />
+                    </Stepper.Step>
                   ))}
-                </ol>
+                </Stepper>
               </Empty>
             </Card>
           ) : (
@@ -274,6 +284,7 @@ function Progress({ id, onDetail }: { id: number; onDetail: (id: number) => void
       status: delivered ? 'done' : notifyDead ? 'error' : paid ? 'current' : 'wait',
     },
   ]
+  const active = steps.findIndex((s) => s.status !== 'done')
   return (
     <Panel
       title="测试进度"
@@ -285,23 +296,23 @@ function Progress({ id, onDetail }: { id: number; onDetail: (id: number) => void
       }
     >
       <div className="flex flex-col gap-6">
-        <ol className="flex">
+        <Stepper aria-label="测试进度" size="sm" currentStep={active < 0 ? steps.length : active}>
           {steps.map((s, i) => (
-            <li
-              key={i}
-              className={cx(
-                'relative flex flex-1 flex-col items-center gap-2 text-center',
-                i > 0 &&
-                  'before:absolute before:top-2.5 before:right-[calc(50%+16px)] before:left-[calc(-50%+16px)] before:h-px before:bg-separator',
-              )}
-            >
-              <span className="grid size-5 place-items-center">{stepDot(s.status)}</span>
-              <span className={cx('text-xs sm:text-sm', s.status === 'wait' ? 'text-muted' : 'font-medium')}>
-                {s.title}
-              </span>
-            </li>
+            <Stepper.Step key={i} style={s.status === 'error' ? dangerStep : undefined}>
+              <Stepper.Indicator>
+                {s.status === 'error' ? (
+                  <Stepper.Icon>
+                    <Xmark />
+                  </Stepper.Icon>
+                ) : undefined}
+              </Stepper.Indicator>
+              <Stepper.Content>
+                <Stepper.Title>{s.title}</Stepper.Title>
+              </Stepper.Content>
+              <Stepper.Separator />
+            </Stepper.Step>
           ))}
-        </ol>
+        </Stepper>
 
         {!paid && o.state === 'pending' && (
           <div className="flex flex-col items-center gap-3 rounded-2xl bg-accent-soft/60 px-4 py-6 text-center">

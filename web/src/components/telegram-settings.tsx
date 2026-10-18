@@ -1,8 +1,8 @@
 // 设置 → 管理员通知：Telegram 机器人、接收人，以及告警、收款到账、付款申诉要不要发。
 // 结构和 internal/admin/telegram.go 一致。
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Description, Dropdown, Form, Label, Separator } from '@yreidev/ui'
+import { Button, Description, Dropdown, Form, ItemCard, ItemCardGroup, Label, Separator } from '@yreidev/ui'
 import {
   ArrowUpRightFromSquare,
   ChevronDown,
@@ -31,7 +31,6 @@ import {
   NumberInput,
   Panel,
   SettingsRow,
-  Stack,
   StatusDot,
   SwitchInput,
   TextInput,
@@ -402,46 +401,50 @@ function ChatsPanel({ tg, now }: { tg: TelegramView; now: number }) {
             还没有接收人，消息发不出去。点“添加接收人”，用自己的 Telegram 打开链接，点“开始”就绑好了。
           </p>
         ) : (
-          <ul className="flex flex-col divide-y divide-separator">
-            {tg.chats.map((c) => (
-              <li key={c.id} className="flex items-center justify-between gap-3 py-2.5 first:pt-0 last:pb-0">
-                <Stack
-                  className="min-w-0"
-                  main={<span className="break-all">{c.name}</span>}
-                  sub={
-                    c.error_at > c.sent_at ? (
-                      <span className="text-danger">
-                        {relative(c.error_at, now)}发送失败：{c.error}
-                      </span>
-                    ) : c.sent_at ? (
-                      `${relative(c.sent_at, now)}送达`
-                    ) : (
-                      `${relative(c.created_at, now)}绑定，还没发过消息`
-                    )
-                  }
-                />
-                <Confirm
-                  title="解除绑定？"
-                  content="之后不再给这个账号发消息。"
-                  okText="解除"
-                  danger
-                  onConfirm={async () => {
-                    try {
-                      await api.del(`${base}/chats/${c.id}`)
-                      await refresh()
-                      toastOK('已解除绑定')
-                    } catch (e) {
-                      toastError(e)
-                    }
-                  }}
-                >
-                  <Button size="sm" variant="ghost" className="shrink-0">
-                    解除
-                  </Button>
-                </Confirm>
-              </li>
+          <ItemCardGroup variant="transparent">
+            {tg.chats.map((c, i) => (
+              <Fragment key={c.id}>
+                {i > 0 && <Separator />}
+                <ItemCard variant="transparent" className="px-0">
+                  <ItemCard.Content>
+                    <ItemCard.Title className="break-all whitespace-normal">{c.name}</ItemCard.Title>
+                    <ItemCard.Description className="whitespace-normal">
+                      {c.error_at > c.sent_at ? (
+                        <span className="text-danger">
+                          {relative(c.error_at, now)}发送失败：{c.error}
+                        </span>
+                      ) : c.sent_at ? (
+                        `${relative(c.sent_at, now)}送达`
+                      ) : (
+                        `${relative(c.created_at, now)}绑定，还没发过消息`
+                      )}
+                    </ItemCard.Description>
+                  </ItemCard.Content>
+                  <ItemCard.Action>
+                    <Confirm
+                      title="解除绑定？"
+                      content="之后不再给这个账号发消息。"
+                      okText="解除"
+                      danger
+                      onConfirm={async () => {
+                        try {
+                          await api.del(`${base}/chats/${c.id}`)
+                          await refresh()
+                          toastOK('已解除绑定')
+                        } catch (e) {
+                          toastError(e)
+                        }
+                      }}
+                    >
+                      <Button size="sm" variant="ghost" className="shrink-0">
+                        解除
+                      </Button>
+                    </Confirm>
+                  </ItemCard.Action>
+                </ItemCard>
+              </Fragment>
             ))}
-          </ul>
+          </ItemCardGroup>
         )}
       </div>
       <BindDialog binding={bindOpen ? tg.binding : null} now={now} onCancel={cancelBind} />

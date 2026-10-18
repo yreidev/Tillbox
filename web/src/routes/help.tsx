@@ -1,7 +1,7 @@
-import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useEffectEvent, useRef, useState, type ReactNode } from 'react'
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery, type UseQueryResult } from '@tanstack/react-query'
-import { Button, Form, Spinner } from '@yreidev/ui'
+import { Button, Form, ItemCard, ItemCardGroup, Separator, Spinner, Stepper } from '@yreidev/ui'
 import {
   ArrowLeft,
   ArrowRotateRight,
@@ -20,19 +20,7 @@ import {
   savedReceipts,
   usePaymentHistory,
 } from '../lib/payment-history'
-import {
-  Copyable,
-  Notice,
-  Panel,
-  Pill,
-  Timeline,
-  cx,
-  linkClass,
-  stepDot,
-  toastError,
-  type StepStatus,
-  type Tone,
-} from '../lib/ui-base'
+import { Copyable, Notice, Panel, Events, Pill, cx, linkClass, toastError, type Tone } from '../lib/ui-base'
 import { CheckboxInput, DateTimeInput, SelectInput, TextAreaInput, TextInput } from '../lib/ui-form'
 
 // 付款自助页：付款人自己查订单、提交付款问题、查看处理进度。三步对应页面上的三块，
@@ -220,35 +208,22 @@ function HelpPage() {
           <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">付款自助服务</h1>
           <p className="mt-2 text-muted">先查订单，再核对付款。提交问题后，随时查看处理进度。</p>
         </div>
-        <nav aria-label="办理步骤" className="mt-6">
-          <ol className="grid grid-cols-3 gap-2 sm:gap-3">
-            {steps.map((s, i) => {
-              const status: StepStatus = i < step ? 'done' : i === step ? 'current' : 'wait'
-              return (
-                <li key={s.id}>
-                  <button
-                    type="button"
-                    onClick={() => scrollTo(s.id)}
-                    aria-current={i === step ? 'step' : undefined}
-                    className={cx(
-                      'flex h-full w-full flex-col items-start gap-2 rounded-2xl bg-surface p-3 text-left shadow-surface transition-colors outline-none hover:bg-surface-secondary focus-visible:ring-2 focus-visible:ring-focus sm:flex-row sm:items-center sm:gap-3 sm:p-4',
-                      status === 'current' && 'ring-1 ring-accent/40',
-                    )}
-                  >
-                    <span className="grid size-6 shrink-0 place-items-center">{stepDot(status)}</span>
-                    <span className="min-w-0">
-                      <span className="block text-sm font-medium">
-                        <span className="tb-num text-muted">{i + 1}. </span>
-                        <span className="sm:hidden">{s.short}</span>
-                        <span className="max-sm:hidden">{s.title}</span>
-                      </span>
-                      <span className="mt-0.5 hidden text-xs text-muted sm:block">{s.text}</span>
-                    </span>
-                  </button>
-                </li>
-              )
-            })}
-          </ol>
+        <nav className="mt-6">
+          <Stepper aria-label="办理步骤" currentStep={step} onStepChange={(i) => scrollTo(steps[i].id)}>
+            {steps.map((s) => (
+              <Stepper.Step key={s.id}>
+                <Stepper.Indicator />
+                <Stepper.Content>
+                  <Stepper.Title>
+                    <span className="sm:hidden">{s.short}</span>
+                    <span className="max-sm:hidden">{s.title}</span>
+                  </Stepper.Title>
+                  <Stepper.Description className="max-sm:hidden">{s.text}</Stepper.Description>
+                </Stepper.Content>
+                <Stepper.Separator />
+              </Stepper.Step>
+            ))}
+          </Stepper>
         </nav>
         <div className="mt-6 grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_400px]">
           <div className="flex min-w-0 flex-col gap-5">
@@ -316,27 +291,32 @@ function HelpPage() {
                       暂无记录。可输入订单号查询，或在下方勾选“不知道平台订单号”提交付款问题。
                     </p>
                   ) : (
-                    <ul className="mt-3 divide-y divide-separator rounded-xl border border-separator">
-                      {history.map((p) => (
-                        <li key={p.trade_no} className="flex items-center gap-3 px-3 py-2.5 sm:px-4">
-                          <div className="min-w-0 flex-1">
-                            <span className="tb-mono block text-sm">{p.trade_no}</span>
-                            <span className="mt-0.5 block text-xs text-muted">
-                              应付 <span className="tb-num">¥{p.pay_amount}</span> · {states[p.state]}（上次记录）
-                            </span>
-                          </div>
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            isDisabled={looking}
-                            aria-label={`查询订单 ${p.trade_no}`}
-                            onPress={() => pick(p.trade_no)}
-                          >
-                            查询 / 申诉
-                          </Button>
-                        </li>
+                    <ItemCardGroup variant="outline" className="mt-3">
+                      {history.map((p, i) => (
+                        <Fragment key={p.trade_no}>
+                          {i > 0 && <Separator />}
+                          <ItemCard className="px-3 py-2.5 sm:px-4">
+                            <ItemCard.Content>
+                              <ItemCard.Title className="tb-mono">{p.trade_no}</ItemCard.Title>
+                              <ItemCard.Description>
+                                应付 <span className="tb-num">¥{p.pay_amount}</span> · {states[p.state]}（上次记录）
+                              </ItemCard.Description>
+                            </ItemCard.Content>
+                            <ItemCard.Action>
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                isDisabled={looking}
+                                aria-label={`查询订单 ${p.trade_no}`}
+                                onPress={() => pick(p.trade_no)}
+                              >
+                                查询 / 申诉
+                              </Button>
+                            </ItemCard.Action>
+                          </ItemCard>
+                        </Fragment>
                       ))}
-                    </ul>
+                    </ItemCardGroup>
                   )}
                 </div>
               </Panel>
@@ -364,28 +344,33 @@ function HelpPage() {
                 {receipts.length > 1 && (
                   <div className={cx(receipt && 'border-t border-separator pt-5')}>
                     <p className="text-xs text-muted">本机保存的查询凭证（最近 10 张，仅保存在当前浏览器）</p>
-                    <ul className="mt-2 divide-y divide-separator rounded-xl border border-separator">
-                      {receipts.map((r) => (
-                        <li key={r.receipt} className="flex items-center gap-3 px-3 py-2">
-                          <div className="min-w-0 flex-1">
-                            <span className="tb-mono block text-sm">
-                              {r.receipt.slice(0, 8)}…{r.receipt.slice(-6)}
-                            </span>
-                            <span className="block text-xs text-muted">
-                              {r.saved_at ? `保存于 ${time(r.saved_at)}` : '较早保存'}
-                            </span>
-                          </div>
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            isDisabled={r.receipt === receipt}
-                            onPress={() => setReceipt(r.receipt)}
-                          >
-                            {r.receipt === receipt ? '正在查看' : '查看进度'}
-                          </Button>
-                        </li>
+                    <ItemCardGroup variant="outline" className="mt-2">
+                      {receipts.map((r, i) => (
+                        <Fragment key={r.receipt}>
+                          {i > 0 && <Separator />}
+                          <ItemCard className="px-3 py-2">
+                            <ItemCard.Content>
+                              <ItemCard.Title className="tb-mono">
+                                {r.receipt.slice(0, 8)}…{r.receipt.slice(-6)}
+                              </ItemCard.Title>
+                              <ItemCard.Description>
+                                {r.saved_at ? `保存于 ${time(r.saved_at)}` : '较早保存'}
+                              </ItemCard.Description>
+                            </ItemCard.Content>
+                            <ItemCard.Action>
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                isDisabled={r.receipt === receipt}
+                                onPress={() => setReceipt(r.receipt)}
+                              >
+                                {r.receipt === receipt ? '正在查看' : '查看进度'}
+                              </Button>
+                            </ItemCard.Action>
+                          </ItemCard>
+                        </Fragment>
                       ))}
-                    </ul>
+                    </ItemCardGroup>
                   </div>
                 )}
                 <ReceiptForm onSubmit={remember} divided={!!receipt || receipts.length > 1} />
@@ -618,9 +603,9 @@ function ProgressView({
             </span>
           </div>
           {known && (
-            <Timeline
+            <Events
               items={[
-                { key: 'submitted', title: '已提交', dot: stepDot('done') },
+                { key: 'submitted', title: '已提交', step: 'done' },
                 {
                   key: 'check',
                   title:
@@ -631,9 +616,9 @@ function ProgressView({
                         : s === 'resolved'
                           ? '核查完成'
                           : '等待核查',
-                  dot: stepDot(s === 'resolved' ? 'done' : 'current'),
+                  step: s === 'resolved' ? 'done' : 'current',
                 },
-                { key: 'resolved', title: '已处理', dot: stepDot(s === 'resolved' ? 'done' : 'wait') },
+                { key: 'resolved', title: '已处理', step: s === 'resolved' ? 'done' : 'wait' },
               ]}
             />
           )}

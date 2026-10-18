@@ -1,9 +1,20 @@
-import { useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, linkVariants } from '@yreidev/ui'
-import { ArrowsRotateRight, ChevronRight, CircleCheck, CircleExclamation, TriangleExclamation } from '@gravity-ui/icons'
-import { Chart, tooltipStyle, type ChartOption, type Palette } from '../../components/chart'
+import {
+  BarChart,
+  Button,
+  ChartTooltip,
+  ComposedChart,
+  ItemCard,
+  ItemCardGroup,
+  ListView,
+  Segment,
+  Separator,
+  linkVariants,
+  type ChartTooltipPayloadItem,
+} from '@yreidev/ui'
+import { ArrowsRotateRight, ChevronRight, CircleExclamation, TriangleExclamation } from '@gravity-ui/icons'
 import type { MonitorState, TelegramView } from '../../components/telegram-settings'
 import { api } from '../../lib/api'
 import { duration, relative, time } from '../../lib/format'
@@ -18,7 +29,6 @@ import {
   PageSkeleton,
   Panel,
   Pill,
-  Segmented,
   Stack,
   StatusDot,
   cx,
@@ -135,21 +145,15 @@ function MonitorPage() {
   )
 }
 
-// splitLink 把 “/admin/notifications?status=dead” 拆成路由和查询参数。
-function splitLink(link: string) {
-  const [to, qs] = link.split('?', 2)
-  return { to, search: qs ? Object.fromEntries(new URLSearchParams(qs)) : undefined }
-}
-
 function LevelIcon({ level }: { level: Level }) {
-  return (
-    <span
-      className={cx(
-        'grid size-9 shrink-0 place-items-center rounded-xl [&>svg]:size-4',
-        level === 'critical' ? 'bg-danger-soft text-danger' : 'bg-warning-soft text-warning',
-      )}
-    >
-      {level === 'critical' ? <TriangleExclamation /> : <CircleExclamation />}
+  // 图标的颜色直接写在 svg 上：ListView 给条目里的 svg 统一设了灰色
+  return level === 'critical' ? (
+    <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-danger-soft">
+      <TriangleExclamation className="text-danger" />
+    </span>
+  ) : (
+    <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-warning-soft">
+      <CircleExclamation className="text-warning" />
     </span>
   )
 }
@@ -174,43 +178,37 @@ function AlertsPanel({
       }
     >
       {alerts.length === 0 ? (
-        <div className="flex items-center gap-3 rounded-xl bg-success-soft px-4 py-3 text-sm text-success-soft-foreground">
-          <CircleCheck className="size-5 shrink-0" />
-          一切正常，没有需要处理的问题。
-        </div>
+        <Notice status="success">一切正常，没有需要处理的问题。</Notice>
       ) : (
-        <ul className="flex flex-col divide-y divide-separator">
-          {alerts.map((a) => {
-            const link = a.link ? splitLink(a.link) : null
-            return (
-              <li key={a.id} className="flex items-start gap-3 py-3 first:pt-0 last:pb-0">
+        <ListView aria-label="进行中的告警" variant="secondary" items={alerts} className="-mx-2">
+          {(a) => (
+            <ListView.Item id={a.id} href={a.link || undefined} textValue={a.title}>
+              <ListView.ItemContent className="items-start">
                 <LevelIcon level={a.level} />
-                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <div className="flex min-w-0 flex-col gap-0.5">
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                    <span className="text-sm font-medium">{a.title}</span>
+                    <ListView.Title>{a.title}</ListView.Title>
                     <Pill tone={a.level === 'critical' ? 'danger' : 'warning'}>{levelText[a.level]}</Pill>
                   </div>
-                  {a.detail && <p className="text-xs break-words text-muted">{a.detail}</p>}
-                  <p className="text-xs text-muted">
+                  {a.detail && (
+                    <ListView.Description className="break-words whitespace-normal">{a.detail}</ListView.Description>
+                  )}
+                  <ListView.Description className="whitespace-normal">
                     <span className="tb-num">{time(a.started_at, false)}</span> 开始，已持续{' '}
                     {duration(now - a.started_at)}
                     {notifying && (a.notified_at ? ' · 已发 Telegram' : ' · Telegram 还没发出')}
-                  </p>
+                  </ListView.Description>
                 </div>
-                {link && (
-                  <Link
-                    to={link.to}
-                    search={link.search}
-                    className={cx(linkVariants().base(), 'mt-2 inline-flex shrink-0 items-center gap-0.5 text-sm')}
-                  >
-                    去处理
-                    <ChevronRight className="size-3.5" />
-                  </Link>
-                )}
-              </li>
-            )
-          })}
-        </ul>
+              </ListView.ItemContent>
+              {a.link && (
+                <ListView.ItemAction className="flex items-center gap-1 text-sm text-accent">
+                  <span className="max-sm:hidden">去处理</span>
+                  <ChevronRight className="size-3.5" />
+                </ListView.ItemAction>
+              )}
+            </ListView.Item>
+          )}
+        </ListView>
       )}
     </Panel>
   )
@@ -228,34 +226,38 @@ function ChannelsPanel({ channels, now }: { channels: ChannelHealth[]; now: numb
           页新建。
         </p>
       ) : (
-        <ul className="flex flex-col divide-y divide-separator">
-          {channels.map((c) => (
-            <li key={c.id} className="flex flex-col gap-1 py-3 first:pt-0 last:pb-0">
-              <div className="flex items-start justify-between gap-3">
-                <Stack
-                  className="min-w-0"
-                  main={<span className="font-medium">{c.name}</span>}
-                  sub={`${channelTypeText[c.type] ?? c.type} · 渠道 ${c.id}`}
-                />
-                <StatusDot tone={!c.enabled ? 'default' : c.problem ? 'danger' : 'success'}>
-                  {!c.enabled ? '已停用' : c.problem ? '不能收款' : '能收款'}
-                </StatusDot>
-              </div>
-              {c.enabled && c.problem && <p className="text-xs text-danger">{c.problem}</p>}
-              {channelHealth(c, now).map((l, i) => (
-                <p
-                  key={i}
-                  className={cx(
-                    'text-xs',
-                    l.tone === 'danger' ? 'text-danger' : l.tone === 'warning' ? 'text-warning' : 'text-muted',
-                  )}
-                >
-                  {l.text}
-                </p>
-              ))}
-            </li>
+        <ItemCardGroup variant="transparent">
+          {channels.map((c, i) => (
+            <Fragment key={c.id}>
+              {i > 0 && <Separator />}
+              <ItemCard variant="transparent" className="items-start px-0">
+                <ItemCard.Content className="gap-1">
+                  <ItemCard.Title>{c.name}</ItemCard.Title>
+                  <ItemCard.Description className="mt-0">
+                    {channelTypeText[c.type] ?? c.type} · 渠道 {c.id}
+                  </ItemCard.Description>
+                  {c.enabled && c.problem && <p className="text-xs text-danger">{c.problem}</p>}
+                  {channelHealth(c, now).map((l, i) => (
+                    <p
+                      key={i}
+                      className={cx(
+                        'text-xs',
+                        l.tone === 'danger' ? 'text-danger' : l.tone === 'warning' ? 'text-warning' : 'text-muted',
+                      )}
+                    >
+                      {l.text}
+                    </p>
+                  ))}
+                </ItemCard.Content>
+                <ItemCard.Action>
+                  <StatusDot tone={!c.enabled ? 'default' : c.problem ? 'danger' : 'success'}>
+                    {!c.enabled ? '已停用' : c.problem ? '不能收款' : '能收款'}
+                  </StatusDot>
+                </ItemCard.Action>
+              </ItemCard>
+            </Fragment>
           ))}
-        </ul>
+        </ItemCardGroup>
       )}
     </Panel>
   )
@@ -323,117 +325,63 @@ function cstLabel(ms: number, hourly: boolean) {
   return hourly ? `${pad(t.getUTCHours())}:00` : `${pad(t.getUTCMonth() + 1)}-${pad(t.getUTCDate())}`
 }
 
-// axes 是两张趋势图共用的坐标轴样式。
-function axes(p: Palette, labels: string[]): Pick<ChartOption, 'grid' | 'xAxis' | 'legend'> {
-  return {
-    grid: { left: 4, right: 4, top: 36, bottom: 4 },
-    legend: {
-      top: 0,
-      left: 0,
-      icon: 'roundRect',
-      itemWidth: 10,
-      itemHeight: 10,
-      textStyle: { color: p.muted, fontFamily: p.font, fontSize: 12 },
-    },
-    xAxis: {
-      type: 'category',
-      data: labels,
-      axisTick: { show: false },
-      axisLine: { lineStyle: { color: p.separator } },
-      axisLabel: { color: p.muted, fontFamily: p.font, fontSize: 11 },
-    },
-  }
+// Legend 是趋势图的图例，照组件库示例：色点加名称。
+function Legend({ items }: { items: { label: string; color: string }[] }) {
+  return (
+    <div className="flex flex-wrap items-center gap-3" aria-hidden>
+      {items.map((it) => (
+        <span key={it.label} className="flex items-center gap-1.5 text-xs text-muted">
+          <span className="size-2.5 rounded-full" style={{ backgroundColor: it.color }} />
+          {it.label}
+        </span>
+      ))}
+    </div>
+  )
 }
 
-function countAxis(p: Palette) {
-  return {
-    type: 'value' as const,
-    minInterval: 1,
-    splitNumber: 3,
-    axisLabel: { color: p.muted, fontFamily: p.font, fontSize: 11 },
-    splitLine: { lineStyle: { color: p.separator, type: 'dashed' as const } },
-  }
+// TrendTooltip 是趋势图的悬停提示：笔数、次数带单位，成功率显示百分比，没有新建订单的格子显示“—”。
+function TrendTooltip({
+  active,
+  payload,
+  label,
+  unit,
+}: {
+  active?: boolean
+  payload?: ChartTooltipPayloadItem[]
+  label?: string | number
+  unit: string
+}) {
+  if (!active || !payload?.length) return null
+  return (
+    <ChartTooltip indicator="line">
+      <ChartTooltip.Header>{label}</ChartTooltip.Header>
+      {payload.map((it) => (
+        <ChartTooltip.Item key={String(it.dataKey)}>
+          <ChartTooltip.Indicator color={it.stroke ?? it.color ?? it.fill} />
+          <ChartTooltip.Label>{it.name}</ChartTooltip.Label>
+          <ChartTooltip.Value className="tb-num">
+            {it.dataKey === 'rate'
+              ? it.value === null || it.value === undefined
+                ? '—'
+                : `${String(it.value)}%`
+              : `${String(it.value ?? 0)} ${unit}`}
+          </ChartTooltip.Value>
+        </ChartTooltip.Item>
+      ))}
+    </ChartTooltip>
+  )
 }
 
-const times = (v: unknown) => `${String(v)} 笔`
+const orderLegend = [
+  { label: '新建', color: 'color-mix(in oklab, var(--muted) 35%, transparent)' },
+  { label: '已支付', color: 'var(--success)' },
+  { label: '支付成功率', color: 'var(--accent)' },
+]
 
-// orderChart 是订单趋势：新建和已支付的笔数（左轴），支付成功率（右轴）。
-function orderChart(buckets: Bucket[], labels: string[]) {
-  return (p: Palette): ChartOption => ({
-    ...axes(p, labels),
-    tooltip: tooltipStyle(p),
-    yAxis: [
-      countAxis(p),
-      {
-        type: 'value',
-        min: 0,
-        max: 100,
-        interval: 50,
-        axisLabel: { color: p.muted, fontFamily: p.font, fontSize: 11, formatter: '{value}%' },
-        splitLine: { show: false },
-      },
-    ],
-    series: [
-      {
-        name: '新建',
-        type: 'bar',
-        barMaxWidth: 16,
-        itemStyle: { color: p.muted, opacity: 0.35, borderRadius: [3, 3, 0, 0] },
-        tooltip: { valueFormatter: times },
-        data: buckets.map((b) => b.created),
-      },
-      {
-        name: '已支付',
-        type: 'bar',
-        barMaxWidth: 16,
-        itemStyle: { color: p.success, borderRadius: [3, 3, 0, 0] },
-        tooltip: { valueFormatter: times },
-        data: buckets.map((b) => b.paid),
-      },
-      {
-        name: '支付成功率',
-        type: 'line',
-        yAxisIndex: 1,
-        symbol: 'circle',
-        symbolSize: 5,
-        itemStyle: { color: p.accent },
-        lineStyle: { width: 2 },
-        tooltip: { valueFormatter: (v) => (v === null || v === undefined || v === '-' ? '—' : `${String(v)}%`) },
-        // 没有新建订单的格子不算成功率，画成断开
-        data: buckets.map((b) => (b.created ? Math.round((b.paid / b.created) * 100) : '-')),
-      },
-    ],
-  })
-}
-
-// notifyChart 是通知商户的趋势：送达和失败的次数叠在一起。
-function notifyChart(buckets: Bucket[], labels: string[]) {
-  return (p: Palette): ChartOption => ({
-    ...axes(p, labels),
-    tooltip: tooltipStyle(p),
-    yAxis: countAxis(p),
-    series: [
-      {
-        name: '送达',
-        type: 'bar',
-        stack: 'notify',
-        barMaxWidth: 16,
-        itemStyle: { color: p.success },
-        tooltip: { valueFormatter: (v) => `${String(v)} 次` },
-        data: buckets.map((b) => b.notify_ok),
-      },
-      {
-        name: '失败',
-        type: 'bar',
-        stack: 'notify',
-        barMaxWidth: 16,
-        itemStyle: { color: p.danger, borderRadius: [3, 3, 0, 0] },
-        tooltip: { valueFormatter: (v) => `${String(v)} 次` },
-        data: buckets.map((b) => b.notify_fail),
-      },
-    ],
-  })
-}
+const notifyLegend = [
+  { label: '送达', color: 'var(--success)' },
+  { label: '失败', color: 'var(--danger)' },
+]
 
 function TrendsPanel() {
   const [range, setRange] = useState<Range>('24h')
@@ -448,11 +396,24 @@ function TrendsPanel() {
     placeholderData: keepPreviousData,
   })
   // 页面每 5 秒刷新相对时间，图表只在数据变了时重画
-  const { buckets, orders, notify } = useMemo(() => {
+  const { buckets, rows } = useMemo(() => {
     const buckets = q.data?.buckets ?? []
-    const labels = buckets.map((b) => cstLabel(b.at, q.data?.range === '24h'))
-    return { buckets, orders: orderChart(buckets, labels), notify: notifyChart(buckets, labels) }
+    const hourly = q.data?.range === '24h'
+    const rows = buckets.map((b) => ({
+      label: cstLabel(b.at, hourly),
+      created: b.created,
+      paid: b.paid,
+      // 没有新建订单的格子不算成功率，画成断开
+      rate: b.created ? Math.round((b.paid / b.created) * 100) : null,
+      ok: b.notify_ok,
+      fail: b.notify_fail,
+    }))
+    return { buckets, rows }
   }, [q.data])
+  // 笔数是整数：最大值很小时少画几条刻度，免得 1 笔也画到 4
+  const countTicks = (max: number) => Math.min(5, Math.max(1, max) + 1)
+  const orderTicks = countTicks(Math.max(0, ...rows.map((r) => Math.max(r.created, r.paid))))
+  const notifyTicks = countTicks(Math.max(0, ...rows.map((r) => r.ok + r.fail)))
   const created = buckets.reduce((s, b) => s + b.created, 0)
   const paid = buckets.reduce((s, b) => s + b.paid, 0)
   const ok = buckets.reduce((s, b) => s + b.notify_ok, 0)
@@ -462,7 +423,15 @@ function TrendsPanel() {
     <Panel
       title="趋势"
       description="不含测试订单，北京时间分格"
-      extra={<Segmented ariaLabel="时间范围" value={range} onChange={setRange} options={rangeOptions} />}
+      extra={
+        <Segment aria-label="时间范围" size="sm" selectedKey={range} onSelectionChange={(k) => setRange(k as Range)}>
+          {rangeOptions.map((o) => (
+            <Segment.Item key={o.value} id={o.value}>
+              {o.label}
+            </Segment.Item>
+          ))}
+        </Segment>
+      }
     >
       {q.isError && <Notice status="danger">{q.error.message}</Notice>}
       <div className="grid gap-6 lg:grid-cols-2">
@@ -477,7 +446,55 @@ function TrendsPanel() {
             )}
             。按下单时间归格，最近一格里可能还有等待付款的订单。
           </p>
-          <Chart build={orders} label={`订单趋势：新建 ${created} 笔，已支付 ${paid} 笔`} className="h-64" />
+          <Legend items={orderLegend} />
+          <ComposedChart
+            data={rows}
+            height={256}
+            role="img"
+            aria-label={`订单趋势：新建 ${created} 笔，已支付 ${paid} 笔`}
+          >
+            <ComposedChart.Grid vertical={false} strokeDasharray="3 3" />
+            <ComposedChart.XAxis dataKey="label" minTickGap={8} />
+            <ComposedChart.YAxis yAxisId="count" allowDecimals={false} tickCount={orderTicks} width={32} />
+            <ComposedChart.YAxis
+              yAxisId="rate"
+              orientation="right"
+              domain={[0, 100]}
+              ticks={[0, 50, 100]}
+              tickFormatter={(v: number) => `${v}%`}
+              width={40}
+            />
+            <ComposedChart.Bar
+              yAxisId="count"
+              dataKey="created"
+              name="新建"
+              fill="var(--muted)"
+              fillOpacity={0.35}
+              maxBarSize={16}
+              radius={[3, 3, 0, 0]}
+              isAnimationActive={false}
+            />
+            <ComposedChart.Bar
+              yAxisId="count"
+              dataKey="paid"
+              name="已支付"
+              fill="var(--success)"
+              maxBarSize={16}
+              radius={[3, 3, 0, 0]}
+              isAnimationActive={false}
+            />
+            <ComposedChart.Line
+              yAxisId="rate"
+              dataKey="rate"
+              name="支付成功率"
+              type="linear"
+              stroke="var(--accent)"
+              strokeWidth={2}
+              dot={{ r: 2.5 }}
+              isAnimationActive={false}
+            />
+            <ComposedChart.Tooltip cursor={{ fill: 'var(--default)' }} content={<TrendTooltip unit="笔" />} />
+          </ComposedChart>
         </section>
         <section className="flex min-w-0 flex-col gap-1">
           <h3 className="text-sm font-semibold">通知商户</h3>
@@ -485,7 +502,30 @@ function TrendsPanel() {
             送达 <span className="tb-num">{ok}</span> 次，失败 <span className="tb-num">{fail}</span>{' '}
             次。按发送时间归格，含自动重发和手动重发。
           </p>
-          <Chart build={notify} label={`通知商户趋势：送达 ${ok} 次，失败 ${fail} 次`} className="h-64" />
+          <Legend items={notifyLegend} />
+          <BarChart data={rows} height={256} role="img" aria-label={`通知商户趋势：送达 ${ok} 次，失败 ${fail} 次`}>
+            <BarChart.Grid vertical={false} strokeDasharray="3 3" />
+            <BarChart.XAxis dataKey="label" minTickGap={8} />
+            <BarChart.YAxis allowDecimals={false} tickCount={notifyTicks} width={32} />
+            <BarChart.Bar
+              dataKey="ok"
+              name="送达"
+              stackId="notify"
+              fill="var(--success)"
+              maxBarSize={16}
+              isAnimationActive={false}
+            />
+            <BarChart.Bar
+              dataKey="fail"
+              name="失败"
+              stackId="notify"
+              fill="var(--danger)"
+              maxBarSize={16}
+              radius={[3, 3, 0, 0]}
+              isAnimationActive={false}
+            />
+            <BarChart.Tooltip cursor={{ fill: 'var(--default)' }} content={<TrendTooltip unit="次" />} />
+          </BarChart>
         </section>
       </div>
     </Panel>

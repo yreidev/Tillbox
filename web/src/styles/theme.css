@@ -3,13 +3,23 @@
  * 颜色一律用 HeroUI 的主题变量（bg-background、bg-surface、text-muted、text-accent 等），不写死色值；
  * 深浅色由 <html> 上的 dark / light 类和 data-theme 切换（src/lib/theme.ts）。
  */
+/*
+ * 层的先后。ui-utilities 放 admin.css 里给后台组件生成的工具类，排在 utilities 前面：
+ * 两边都有的类（比如 w-full）以本文件为准，不会盖掉页面上的响应式写法（w-full sm:w-72）。
+ */
+@layer theme, base, components, ui-utilities, utilities;
 @import 'tailwindcss';
 @import '@heroui/styles';
 /*
- * 组件都从 @yreidev/ui 导入，但现在用的全是开源 HeroUI 组件，样式由上一行提供。
- * 用到 @yreidev/ui 自己的组件（Sidebar、KPI 等）时，按组件加一行 @import '@yreidev/ui/css/<目录名>.css';（不加 layer）。
+ * 组件都从 @yreidev/ui 导入。开源 HeroUI 组件的样式由上一行提供；@yreidev/ui 自己的组件按组件引样式：
+ * 对外页面（收银台、付款自助、登录）也用到的写在这里，只有后台用的写在 admin.css，随后台代码按需加载。
+ * 用到新的组件时加一行 @import '@yreidev/ui/css/<目录名>.css';（不加 layer，依赖的组件会一起带上）。
  * 不要整包引入 @yreidev/ui/css：每个页面的样式表会多 20 KB 左右（gzip），收银台也一样。
  */
+@import '@yreidev/ui/css/item-card.css';
+@import '@yreidev/ui/css/item-card-group.css';
+@import '@yreidev/ui/css/stepper.css';
+@import '@yreidev/ui/css/timeline.css';
 
 @theme {
   --font-sans:

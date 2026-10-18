@@ -1,13 +1,27 @@
-import { useEffect, useState, type ComponentType, type SVGProps } from 'react'
-import { Link, Outlet, createFileRoute, redirect, useNavigate, useRouterState } from '@tanstack/react-router'
+import { useCallback, useEffect, useState, type ComponentType, type SVGProps } from 'react'
+import { Outlet, createFileRoute, redirect, useNavigate, useRouterState } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Avatar, Button, Chip, Drawer, Dropdown, Form, Header, Label, Separator, Tooltip } from '@yreidev/ui'
+import {
+  AppLayout,
+  Avatar,
+  Badge,
+  Button,
+  Chip,
+  Dropdown,
+  Form,
+  Header,
+  Label,
+  Navbar,
+  Separator,
+  Sidebar,
+  Tooltip,
+  useSidebar,
+} from '@yreidev/ui'
 import {
   Archive,
   ArrowRightArrowLeft,
   ArrowRightFromSquare,
   ArrowUpRightFromSquare,
-  Bars,
   Bell,
   Briefcase,
   ChartColumn,
@@ -19,7 +33,6 @@ import {
   Gear,
   HeartPulse,
   Key,
-  LayoutSideContentLeft,
   Moon,
   Receipt,
   Sun,
@@ -27,7 +40,7 @@ import {
 import { Logo } from '../../components/brand'
 import { ApiError, api, casesCountQuery, meQuery, overviewQuery } from '../../lib/api'
 import { setThemePref, useThemePref, type ThemePref } from '../../lib/theme'
-import { Dialog, TextInput, cx, toastError, toastOK, type Tone } from '../../lib/ui'
+import { Dialog, TextInput, toastError, toastOK, type Tone } from '../../lib/ui'
 
 export const Route = createFileRoute('/admin')({
   beforeLoad: async ({ context, location }) => {
@@ -44,14 +57,14 @@ export const Route = createFileRoute('/admin')({
 })
 
 type Icon = ComponentType<SVGProps<SVGSVGElement>>
-type Badge = 'anomalies' | 'notifications' | 'cases' | 'alerts'
+type Todo = 'anomalies' | 'notifications' | 'cases' | 'alerts'
 
 interface NavItem {
   to: string
   text: string
   icon: Icon
   /** 菜单右侧的待办数：未处理的异常、放弃了的通知、等人工的申诉、没恢复的告警 */
-  badge?: Badge
+  badge?: Todo
 }
 
 // 菜单按“每天看的、配置的、偶尔用的”分三组，每项图标不重复（docs/ui.md）。
@@ -84,7 +97,7 @@ const groups: { title: string; items: NavItem[] }[] = [
   },
 ]
 
-const badgeTone: Record<Badge, Tone> = {
+const badgeTone: Record<Todo, Tone> = {
   anomalies: 'warning',
   notifications: 'danger',
   cases: 'warning',
@@ -97,19 +110,6 @@ const themes: { value: ThemePref; text: string; icon: Icon }[] = [
   { value: 'dark', text: '深色', icon: Moon },
 ]
 
-const narrowQuery = '(max-width: 1023px)'
-
-function useNarrow() {
-  const [narrow, setNarrow] = useState(() => window.matchMedia(narrowQuery).matches)
-  useEffect(() => {
-    const mq = window.matchMedia(narrowQuery)
-    const on = () => setNarrow(mq.matches)
-    mq.addEventListener('change', on)
-    return () => mq.removeEventListener('change', on)
-  }, [])
-  return narrow
-}
-
 const collapsedKey = 'tillbox-nav-collapsed'
 
 function readCollapsed() {
@@ -120,8 +120,16 @@ function readCollapsed() {
   }
 }
 
+function saveCollapsed(collapsed: boolean) {
+  try {
+    localStorage.setItem(collapsedKey, collapsed ? '1' : '0')
+  } catch {
+    // 存不下时只在本页生效
+  }
+}
+
 // useNavCounts 取菜单角标的数字。概览接口和概览页共用缓存，申诉数只取计数。
-function useNavCounts(): Record<Badge, number> {
+function useNavCounts(): Record<Todo, number> {
   const overview = useQuery({ ...overviewQuery(7), refetchInterval: 30_000 })
   const cases = useQuery({ ...casesCountQuery, refetchInterval: 30_000 })
   return {
@@ -132,21 +140,13 @@ function useNavCounts(): Record<Badge, number> {
   }
 }
 
+// 后台外壳用组件库的 AppLayout：桌面是可收成图标栏的侧栏（Ctrl/⌘+B 也能切换），手机宽度收进抽屉。
 function AdminLayout() {
   const { data: me } = useQuery(meQuery)
   const path = useRouterState({ select: (s) => s.location.pathname })
-  const narrow = useNarrow()
-  const theme = useThemePref()
-  const [collapsed, setCollapsed] = useState(readCollapsed)
+  const navigate = useNavigate()
   const [pwOpen, setPwOpen] = useState(false)
-  const [navOpen, setNavOpen] = useState(false)
   const counts = useNavCounts()
-  // 换了页面或布局就收起抽屉菜单（在渲染时比较，避免 effect 里再设一次状态）
-  const [navFor, setNavFor] = useState(`${path}|${narrow}`)
-  if (navFor !== `${path}|${narrow}`) {
-    setNavFor(`${path}|${narrow}`)
-    setNavOpen(false)
-  }
 
   const all = groups.flatMap((g) => g.items)
   const current = all.find((m) => path === m.to || (m.to !== '/admin' && path.startsWith(m.to + '/')))
@@ -155,54 +155,60 @@ function AdminLayout() {
     document.title = current ? `${current.text} · ${site}` : `${site} 后台`
   }, [current, site])
 
-  const toggleCollapsed = () => {
-    const next = !collapsed
-    setCollapsed(next)
-    try {
-      localStorage.setItem(collapsedKey, next ? '1' : '0')
-    } catch {
-      // 存不下时只在本页生效
-    }
-  }
-  const ThemeIcon = themes.find((t) => t.value === theme)?.icon ?? Display
-  const sidebar = (rail: boolean) => (
-    <Sidebar site={site} current={current?.to} counts={counts} rail={rail} onPassword={() => setPwOpen(true)} />
-  )
+  const go = useCallback((href: string) => void navigate({ href }), [navigate])
+  const sidebar = { site, current: current?.to, counts, onPassword: () => setPwOpen(true) }
 
   return (
-    <div className="flex min-h-dvh bg-background">
+    <>
       <a
         className="sr-only z-50 rounded-lg bg-surface px-3 py-2 shadow-overlay focus:not-sr-only focus:fixed focus:top-3 focus:left-3"
         href="#admin-content"
       >
         跳到主内容
       </a>
-      {!narrow && (
-        <aside
-          className={cx(
-            'sticky top-0 flex h-dvh shrink-0 flex-col shadow-[inset_-1px_0_0_var(--color-separator)] transition-[width] duration-200 motion-reduce:transition-none',
-            collapsed ? 'w-16' : 'w-60',
-          )}
+      <AppLayout
+        navigate={go}
+        defaultSidebarOpen={!readCollapsed()}
+        onSidebarOpenChange={(open) => saveCollapsed(!open)}
+        navbar={<AdminNavbar title={current?.text ?? '管理后台'} demo={!!me?.demo} />}
+        sidebar={
+          <>
+            <Sidebar aria-label="后台菜单">
+              <SidebarBody {...sidebar} />
+            </Sidebar>
+            <Sidebar.Mobile aria-label="后台菜单">
+              <SidebarBody {...sidebar} mobile />
+            </Sidebar.Mobile>
+          </>
+        }
+      >
+        <div
+          id="admin-content"
+          tabIndex={-1}
+          className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-4 pt-5 pb-12 outline-none sm:px-6"
         >
-          {sidebar(collapsed)}
-        </aside>
-      )}
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-2 border-b border-separator bg-background/85 px-3 backdrop-blur-md sm:px-5">
-          <Button
-            isIconOnly
-            variant="ghost"
-            size="sm"
-            className="text-muted"
-            aria-label={narrow ? '打开导航菜单' : collapsed ? '展开侧边栏' : '收起侧边栏'}
-            onPress={narrow ? () => setNavOpen(true) : toggleCollapsed}
-          >
-            {narrow ? <Bars /> : <LayoutSideContentLeft />}
-          </Button>
-          <Separator orientation="vertical" className="h-5" />
-          <h1 className="min-w-0 truncate px-1 text-base font-semibold sm:text-lg">{current?.text ?? '管理后台'}</h1>
-          <span className="flex-1" />
-          {me?.demo && (
+          <Outlet />
+        </div>
+      </AppLayout>
+      <PasswordModal open={pwOpen} onClose={() => setPwOpen(false)} />
+    </>
+  )
+}
+
+// AdminNavbar 是顶栏：手机上的菜单按钮、侧栏开关、页面标题，右边是演示模式标记和深浅色切换。
+function AdminNavbar({ title, demo }: { title: string; demo: boolean }) {
+  const theme = useThemePref()
+  const ThemeIcon = themes.find((t) => t.value === theme)?.icon ?? Display
+  return (
+    <Navbar maxWidth="full" height="3.5rem" className="border-b border-separator bg-background/85 backdrop-blur-md">
+      <Navbar.Header>
+        <AppLayout.MenuToggle aria-label="打开导航菜单" className="text-muted" />
+        <Sidebar.Trigger aria-label="展开或收起侧边栏" className="text-muted" />
+        <Separator orientation="vertical" className="h-5 max-md:hidden" />
+        <h1 className="min-w-0 truncate px-1 text-base font-semibold sm:text-lg">{title}</h1>
+        <Navbar.Spacer />
+        <Navbar.Content>
+          {demo && (
             <Tooltip delay={200}>
               <Tooltip.Trigger aria-label="演示模式说明">
                 <Chip size="sm" variant="soft" color="warning">
@@ -238,43 +244,31 @@ function AdminLayout() {
               </Dropdown.Menu>
             </Dropdown.Popover>
           </Dropdown>
-        </header>
-        <main
-          id="admin-content"
-          tabIndex={-1}
-          className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-4 pt-5 pb-12 outline-none sm:px-6"
-        >
-          <Outlet />
-        </main>
-      </div>
-      <Drawer.Backdrop isOpen={navOpen && narrow} onOpenChange={setNavOpen}>
-        <Drawer.Content placement="left">
-          <Drawer.Dialog aria-label="导航菜单" className="w-[min(272px,85vw)] p-0 sm:w-[min(272px,85vw)]">
-            {sidebar(false)}
-          </Drawer.Dialog>
-        </Drawer.Content>
-      </Drawer.Backdrop>
-      <PasswordModal open={pwOpen} onClose={() => setPwOpen(false)} />
-    </div>
+        </Navbar.Content>
+      </Navbar.Header>
+    </Navbar>
   )
 }
 
-// Sidebar 是侧栏内容（桌面侧栏和手机抽屉共用）：站点名、菜单、付款人自助入口和管理员菜单。rail 时只显示图标。
-function Sidebar({
+// SidebarBody 是侧栏内容（桌面侧栏和手机抽屉各渲染一份）：站点名、菜单、付款人自助入口和管理员菜单。
+// 手机抽屉里的文字不带 data-sidebar="label"，桌面侧栏收成图标时才隐藏这些文字。
+function SidebarBody({
   site,
   current,
   counts,
-  rail,
   onPassword,
+  mobile,
 }: {
   site: string
   current?: string
-  counts: Record<Badge, number>
-  rail: boolean
+  counts: Record<Todo, number>
   onPassword: () => void
+  mobile?: boolean
 }) {
   const navigate = useNavigate()
   const qc = useQueryClient()
+  const label = mobile ? undefined : 'label'
+  const id = (key: string) => (mobile ? `m-${key}` : key)
   const logout = async () => {
     try {
       await api.post('/web-api/auth/logout')
@@ -284,77 +278,67 @@ function Sidebar({
     }
   }
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className={cx('flex h-14 shrink-0 items-center gap-2.5', rail ? 'justify-center' : 'px-4')}>
-        <Logo size={28} title={rail ? site : undefined} />
-        {!rail && (
-          <div className="min-w-0 leading-tight">
+    <>
+      <Sidebar.Header>
+        <div className="flex items-center gap-2.5 px-1 py-1">
+          <Logo size={28} title={site} />
+          <div className="min-w-0 leading-tight" data-sidebar={label}>
             <div className="truncate text-sm font-semibold">{site}</div>
             <div className="text-xs text-muted">收款后台</div>
           </div>
-        )}
-      </div>
-      <nav
-        aria-label="后台菜单"
-        className={cx('flex min-h-0 flex-1 flex-col overflow-y-auto pt-2 pb-3', rail ? 'px-2' : 'px-3')}
-      >
-        {groups.map((g, gi) => (
-          <div key={g.title} className={gi > 0 ? (rail ? 'mt-2 border-t border-separator pt-2' : 'mt-5') : undefined}>
-            {!rail && <div className="px-2.5 pb-1.5 text-xs font-medium text-muted">{g.title}</div>}
-            <ul className="flex flex-col gap-0.5">
+        </div>
+      </Sidebar.Header>
+      <Sidebar.Content>
+        {groups.map((g) => (
+          <Sidebar.Group key={g.title}>
+            <Sidebar.GroupLabel>{g.title}</Sidebar.GroupLabel>
+            <Sidebar.Menu aria-label={g.title}>
               {g.items.map((m) => (
-                <li key={m.to}>
-                  <NavLink item={m} active={current === m.to} rail={rail} count={m.badge ? counts[m.badge] : 0} />
-                </li>
+                <NavLink
+                  key={m.to}
+                  id={id(m.to)}
+                  item={m}
+                  active={current === m.to}
+                  count={m.badge ? counts[m.badge] : 0}
+                />
               ))}
-            </ul>
-          </div>
+            </Sidebar.Menu>
+          </Sidebar.Group>
         ))}
-      </nav>
-      <div
-        className={cx(
-          'flex shrink-0 flex-col gap-0.5 border-t border-separator py-3',
-          rail ? 'items-center px-2' : 'px-3',
-        )}
-      >
-        <RailTip text="付款人自助（新标签页）" rail={rail}>
-          <a
+      </Sidebar.Content>
+      <Sidebar.Footer>
+        <Sidebar.Menu aria-label="付款人入口">
+          <Sidebar.MenuItem
+            id={id('help')}
             href="/help"
             target="_blank"
-            rel="noopener noreferrer"
-            aria-label={rail ? '付款人自助（新标签页打开）' : undefined}
-            className={navClass(false, rail)}
+            textValue="付款人自助（新标签页打开）"
+            tooltip="付款人自助（新标签页）"
           >
-            <ArrowUpRightFromSquare className="size-4 shrink-0 text-muted" />
-            {!rail && (
-              <>
-                <span className="flex-1 truncate">付款人自助</span>
-                <span className="text-xs text-muted">新标签页</span>
-              </>
-            )}
-          </a>
-        </RailTip>
+            <Sidebar.MenuIcon>
+              <ArrowUpRightFromSquare className="size-4" />
+            </Sidebar.MenuIcon>
+            <Sidebar.MenuLabel>付款人自助</Sidebar.MenuLabel>
+            <Sidebar.MenuChip>
+              <span className="text-xs text-muted">新标签页</span>
+            </Sidebar.MenuChip>
+          </Sidebar.MenuItem>
+        </Sidebar.Menu>
         <Dropdown>
-          <Button
-            variant="ghost"
+          <Dropdown.Trigger
             aria-label="管理员菜单"
-            isIconOnly={rail}
-            className={cx('h-11 rounded-xl', rail ? 'size-11' : 'w-full justify-start gap-2.5 px-2')}
+            className="flex w-full items-center gap-2.5 rounded-xl px-1 py-1.5 text-left outline-none hover:bg-default focus-visible:ring-2 focus-visible:ring-focus"
           >
             <Avatar size="sm" color="accent" variant="soft" className="size-7 shrink-0">
               <Avatar.Fallback>管</Avatar.Fallback>
             </Avatar>
-            {!rail && (
-              <>
-                <span className="min-w-0 flex-1 text-left leading-tight">
-                  <span className="block truncate text-sm font-medium">管理员</span>
-                  <span className="block truncate text-xs font-normal text-muted">{site}</span>
-                </span>
-                <ChevronsExpandVertical className="size-4 shrink-0 text-muted" />
-              </>
-            )}
-          </Button>
-          <Dropdown.Popover placement={rail ? 'right bottom' : 'top start'} className="min-w-52">
+            <span className="min-w-0 flex-1 leading-tight" data-sidebar={label}>
+              <span className="block truncate text-sm font-medium">管理员</span>
+              <span className="block truncate text-xs text-muted">{site}</span>
+            </span>
+            <ChevronsExpandVertical className="size-4 shrink-0 text-muted" data-sidebar={label} />
+          </Dropdown.Trigger>
+          <Dropdown.Popover placement="top start" className="min-w-52">
             <Dropdown.Menu
               aria-label="管理员菜单"
               onAction={(key) => {
@@ -377,62 +361,38 @@ function Sidebar({
             </Dropdown.Menu>
           </Dropdown.Popover>
         </Dropdown>
-      </div>
-    </div>
+      </Sidebar.Footer>
+    </>
   )
 }
 
-const navClass = (active: boolean, rail: boolean) =>
-  cx(
-    'group relative flex h-9 items-center gap-3 rounded-xl text-sm transition-colors outline-none focus-visible:ring-2 focus-visible:ring-focus',
-    rail ? 'w-11 justify-center' : 'px-2.5',
-    active ? 'bg-default font-medium text-foreground' : 'text-foreground/85 hover:bg-default hover:text-foreground',
-  )
-
-// RailTip 在只显示图标时给菜单项加悬停提示。
-function RailTip({ text, rail, children }: { text: string; rail: boolean; children: React.ReactElement }) {
-  if (!rail) return children
-  return (
-    <Tooltip delay={0}>
-      {/* Trigger 默认是可聚焦的按钮外壳；里面已经是链接，外壳不再占一次 Tab */}
-      <Tooltip.Trigger className="block" tabIndex={-1} role="presentation">
-        {children}
-      </Tooltip.Trigger>
-      <Tooltip.Content placement="right">{text}</Tooltip.Content>
-    </Tooltip>
-  )
-}
-
-function NavLink({ item, active, rail, count }: { item: NavItem; active: boolean; rail: boolean; count: number }) {
+// NavLink 是一项菜单。有待办时右边显示数字；侧栏收成图标时数字藏起来，改在图标右上角放一个圆点。
+function NavLink({ id, item, active, count }: { id: string; item: NavItem; active: boolean; count: number }) {
+  const { isOpen, isMobile } = useSidebar()
   const tone = item.badge ? badgeTone[item.badge] : 'default'
   const label = count > 0 ? `${item.text}（${count} 项待处理）` : item.text
+  const color = tone === 'danger' ? 'danger' : 'warning'
   return (
-    <RailTip text={label} rail={rail}>
-      <Link
-        to={item.to}
-        aria-current={active ? 'page' : undefined}
-        aria-label={rail || count > 0 ? label : undefined}
-        className={navClass(active, rail)}
-      >
-        <item.icon
-          className={cx('size-4 shrink-0', active ? 'text-accent' : 'text-muted group-hover:text-foreground')}
-        />
-        {!rail && <span className="flex-1 truncate">{item.text}</span>}
-        {count > 0 &&
-          (rail ? (
-            <span
-              className={cx(
-                'absolute top-1.5 right-2 size-2 rounded-full ring-2 ring-background',
-                tone === 'danger' ? 'bg-danger' : 'bg-warning',
-              )}
-            />
-          ) : (
-            <Chip size="sm" variant="soft" color={tone} className="tb-num h-5 min-w-5 justify-center px-1.5 text-xs">
-              {count > 99 ? '99+' : count}
-            </Chip>
-          ))}
-      </Link>
-    </RailTip>
+    <Sidebar.MenuItem id={id} href={item.to} isCurrent={active} textValue={label} tooltip={label}>
+      <Sidebar.MenuIcon>
+        {count > 0 && !isOpen && !isMobile ? (
+          <Badge.Anchor>
+            <item.icon className="size-4" />
+            <Badge color={color} placement="top-right" size="sm" />
+          </Badge.Anchor>
+        ) : (
+          <item.icon className="size-4" />
+        )}
+      </Sidebar.MenuIcon>
+      <Sidebar.MenuLabel>{item.text}</Sidebar.MenuLabel>
+      {count > 0 && (
+        <Sidebar.MenuChip>
+          <Chip size="sm" variant="soft" color={tone} className="tb-num h-5 min-w-5 justify-center px-1.5 text-xs">
+            {count > 99 ? '99+' : count}
+          </Chip>
+        </Sidebar.MenuChip>
+      )}
+    </Sidebar.MenuItem>
   )
 }
 
