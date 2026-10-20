@@ -85,9 +85,9 @@ function PaymentTestPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <PageHeader description="用自己的商户下一笔小额测试单，走一遍付款、到账确认和回调验签，确认整条链路是通的。" />
+      <PageHeader description="用自己的商户下一笔小额测试单，走一遍付款、到账确认和通知验签，确认整条链路是通的。" />
       <Notice status="warning">
-        测试单按所选商户的支付渠道下单，会真实收款，请严格按收银台的应付金额付款。回调发回本站验签，不会给业务站充值；测试单不计入营业统计。
+        测试单按所选商户的支付渠道下单，会真实收款，请严格按收银台的应付金额付款。通知发回本站验签，不会给业务站充值；测试单不计入营业统计。
       </Notice>
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
         <div className="flex flex-col gap-4">
@@ -132,7 +132,7 @@ function PaymentTestPage() {
                 }
               />
               <RadioInput
-                label="回调签名"
+                label="通知签名"
                 horizontal
                 value={version}
                 onChange={setVersion}
@@ -213,7 +213,7 @@ function PaymentTestPage() {
             <Card className="rounded-2xl">
               <Empty icon={<Flask />} title="还没选测试单" description="新建一笔，或点一笔最近的测试单看进度。">
                 <Stepper aria-label="测试步骤" size="sm" currentStep={0} className="w-full max-w-md">
-                  {['选商户和金额', '在收银台付款', '本站接收回调并验签'].map((t) => (
+                  {['选商户和金额', '在收银台付款', '本站接收通知并验签'].map((t) => (
                     <Stepper.Step key={t}>
                       <Stepper.Indicator />
                       <Stepper.Content>
@@ -235,7 +235,7 @@ function PaymentTestPage() {
   )
 }
 
-// Progress 是一笔测试单的进度：创建 → 付款确认 → 回调验签，每 3 秒刷新。
+// Progress 是一笔测试单的进度：创建 → 付款确认 → 通知验签，每 3 秒刷新。
 function Progress({ id, onDetail }: { id: number; onDetail: (id: number) => void }) {
   const qc = useQueryClient()
   const current = useQuery({
@@ -280,7 +280,7 @@ function Progress({ id, onDetail }: { id: number; onDetail: (id: number) => void
       status: paid ? 'done' : ended ? 'error' : 'current',
     },
     {
-      title: delivered ? '回调验签通过' : notifyDead ? '回调失败' : '等待回调',
+      title: delivered ? '通知验签通过' : notifyDead ? '通知已放弃' : '等待通知',
       status: delivered ? 'done' : notifyDead ? 'error' : paid ? 'current' : 'wait',
     },
   ]
@@ -339,12 +339,12 @@ function Progress({ id, onDetail }: { id: number; onDetail: (id: number) => void
           </div>
         )}
         {paid && !delivered && !notifyDead && (
-          <Notice title="已确认付款，等待回调">
+          <Notice title="已确认付款，等待通知">
             实收 <span className="tb-num">{yuan(o.paid_amount)}</span> 元。本站正在接收并验证通知签名。
           </Notice>
         )}
         {notifyDead && (
-          <Notice status="danger" title="回调没有送达">
+          <Notice status="danger" title="通知已放弃">
             {d.notification?.last_error || '自动通知 8 次都失败了，到「通知」页查看原因。'}
           </Notice>
         )}
@@ -355,7 +355,7 @@ function Progress({ id, onDetail }: { id: number; onDetail: (id: number) => void
           <div className="flex items-center gap-3 rounded-xl bg-success-soft px-4 py-3 text-sm text-success-soft-foreground">
             <CircleCheck className="size-5 shrink-0" />
             <span>
-              整条链路正常：已确认付款，回调验签通过（接收{' '}
+              整条链路正常：已确认付款，通知验签通过（接收{' '}
               <span className="tb-num">{receipt.data?.receipt.deliveries}</span> 次）。
             </span>
           </div>
@@ -370,7 +370,7 @@ function Progress({ id, onDetail }: { id: number; onDetail: (id: number) => void
             { key: '状态', value: <StateTag state={o.state} /> },
             { key: '商户', value: o.merchant_name || `商户 ${o.merchant_id}` },
             { key: '渠道', value: o.channel_name || o.channel },
-            { key: '回调签名', value: o.version === 2 ? 'V2（RSA）' : 'V1（MD5）' },
+            { key: '通知签名', value: o.version === 2 ? 'V2（RSA）' : 'V1（MD5）' },
             { key: '订单金额', value: <span className="tb-num">{yuan(o.amount)} 元</span> },
             { key: '应付金额', value: <span className="tb-num font-semibold">{yuan(o.pay_amount)} 元</span> },
             paid && { key: '实收金额', value: <span className="tb-num">{yuan(o.paid_amount)} 元</span> },

@@ -694,7 +694,7 @@ function ConfigForm({
             />
             <CheckboxInput
               label="自动补发通知"
-              description="已付款订单的通知失败时，自动重发给商户。"
+              description="已支付订单的通知失败时，自动重发给商户。"
               value={v.auto_notify}
               onChange={(x) => set('auto_notify', x)}
             />
