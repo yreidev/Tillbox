@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -184,38 +185,65 @@ func (a *API) resolveAnomaly(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+// ledgerState 是查账状态加上多久没成功查账算停摆（毫秒，和监控告警用同一个阈值）。
+type ledgerState struct {
+	ledger.Status
+	StaleAfter int64 `json:"stale_after"`
+}
+
+// staleAfter 是现在的停摆阈值（毫秒）。
+func (a *API) staleAfter(ctx context.Context) (int64, error) {
+	pay, err := a.Settings.Payment(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return ledger.StaleAfter(pay).Milliseconds(), nil
+}
+
 // ledgerStatusView 是一个推断型渠道的查账状态，带上渠道名称和是否启用。
 type ledgerStatusView struct {
-	ledger.Status
+	ledgerState
 	Name    string `json:"name"`
 	Enabled bool   `json:"enabled"`
 }
 
-func (a *API) ledgerStatuses() []ledgerStatusView {
+func (a *API) ledgerStatuses(ctx context.Context) ([]ledgerStatusView, error) {
+	stale, err := a.staleAfter(ctx)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]ledgerStatusView, 0)
 	for _, st := range a.Pollers.Statuses() {
-		v := ledgerStatusView{Status: st, Name: st.Source}
+		v := ledgerStatusView{ledgerState: ledgerState{Status: st, StaleAfter: stale}, Name: st.Source}
 		if _, row, ok := a.Channels.ByKey(st.Source); ok {
 			v.Name, v.Enabled = row.Name, row.Enabled
 		}
 		out = append(out, v)
 	}
-	return out
+	return out, nil
 }
 
 // enabledLedgers 只留启用的渠道（概览和运维检查用；停用的渠道不查账）。
-func (a *API) enabledLedgers() []ledgerStatusView {
+func (a *API) enabledLedgers(ctx context.Context) ([]ledgerStatusView, error) {
+	all, err := a.ledgerStatuses(ctx)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]ledgerStatusView, 0)
-	for _, v := range a.ledgerStatuses() {
+	for _, v := range all {
 		if v.Enabled {
 			out = append(out, v)
 		}
 	}
-	return out
+	return out, nil
 }
 
 func (a *API) ledgerStatus(w http.ResponseWriter, r *http.Request) error {
-	ok(w, map[string]any{"items": a.ledgerStatuses()})
+	items, err := a.ledgerStatuses(r.Context())
+	if err != nil {
+		return err
+	}
+	ok(w, map[string]any{"items": items})
 	return nil
 }
 

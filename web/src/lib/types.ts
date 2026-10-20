@@ -165,6 +165,10 @@ export interface LedgerStatus {
   running: boolean
   active: boolean
   next_at: number
+  /** 这次进程里从什么时候起具备查账条件，不具备时为 0 */
+  ready_since: number
+  /** 多久没成功查账算停摆（毫秒），和后端监控告警同一个阈值 */
+  stale_after: number
   /** 渠道实例键 ch<编号> */
   source: string
   channel_id: number

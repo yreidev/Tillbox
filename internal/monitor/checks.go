@@ -90,9 +90,13 @@ func (c *Checker) Check(ctx context.Context) ([]Problem, error) {
 			if st.BackfillFailures >= failureThreshold {
 				add(Problem{Key: "ledger_backfill:" + key, Level: store.AlertWarning, Title: fmt.Sprintf("%s历史补扫连续失败 %d 次", name, st.BackfillFailures), Detail: st.BackfillError, Link: "/admin/channels"})
 			}
-			limit := max(5*time.Minute, time.Duration(pay.NormalInterval)*3*time.Second)
-			if st.LastOKAt > 0 && since(st.LastOKAt) > limit {
+			limit := ledger.StaleAfter(pay)
+			switch {
+			case st.LastOKAt > 0 && since(st.LastOKAt) > limit:
 				add(Problem{Key: "ledger_stale:" + key, Level: store.AlertCritical, Title: fmt.Sprintf("%s超过 %d 分钟没有成功查账", name, int(limit/time.Minute)), Detail: "新付款可能不能及时确认到账。" + st.LastError, Link: "/admin/channels"})
+			case st.LastOKAt == 0 && st.ReadySince > 0 && since(st.ReadySince) > limit:
+				// 从没成功查过账：从具备查账条件起算，配置没填完时由上面的“不能收款”告警提示。
+				add(Problem{Key: "ledger_stale:" + key, Level: store.AlertCritical, Title: fmt.Sprintf("%s启用后超过 %d 分钟还没有成功查过账", name, int(limit/time.Minute)), Detail: "新付款可能不能及时确认到账。" + st.LastError, Link: "/admin/channels"})
 			}
 		}
 	}

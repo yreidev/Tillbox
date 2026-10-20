@@ -16,6 +16,7 @@ import (
 	"tillbox/internal/apptest"
 	"tillbox/internal/assistance"
 	"tillbox/internal/epay"
+	"tillbox/internal/ledger"
 	"tillbox/internal/monitor"
 	"tillbox/internal/order"
 	"tillbox/internal/settings"
@@ -691,5 +692,52 @@ func TestBindConflict(t *testing.T) {
 	m.Telegram.CancelBind()
 	if m.Telegram.Binding() != nil {
 		t.Fatal("取消后不应还在绑定")
+	}
+}
+
+// 查账从没成功过：从具备查账条件起超过停摆阈值才告警，成功查过一次就不再报。
+func TestLedgerNeverSucceeded(t *testing.T) {
+	e, m, _, c := setup(t)
+	e.App.Pollers.SetNow(c.Now)
+	pay, err := e.App.Settings.Payment(e.Ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := func() []monitor.Problem {
+		t.Helper()
+		ps, err := m.Checker.Check(e.Ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []monitor.Problem
+		for _, p := range ps {
+			if strings.HasPrefix(p.Key, "ledger_stale:") {
+				out = append(out, p)
+			}
+		}
+		return out
+	}
+
+	if ps := stale(); len(ps) != 0 {
+		t.Fatalf("还没开始查账时不该报停摆：%+v", ps)
+	}
+	e.Demo.FailWith = errors.New("网络不通")
+	_ = e.App.Pollers.RunOnce(e.Ctx)
+	if ps := stale(); len(ps) != 0 {
+		t.Fatalf("刚开始查账就失败一次，不到阈值不该报停摆：%+v", ps)
+	}
+	c.Add(ledger.StaleAfter(pay) + time.Second)
+	_ = e.App.Pollers.RunOnce(e.Ctx)
+	ps := stale()
+	if len(ps) != 1 || !strings.Contains(ps[0].Title, "还没有成功查过账") || !strings.Contains(ps[0].Detail, "网络不通") {
+		t.Fatalf("就绪后一直没成功查账应告警：%+v", ps)
+	}
+
+	e.Demo.FailWith = nil
+	if err := e.App.Pollers.RunOnce(e.Ctx); err != nil {
+		t.Fatal(err)
+	}
+	if ps := stale(); len(ps) != 0 {
+		t.Fatalf("成功查过账后不该再报：%+v", ps)
 	}
 }

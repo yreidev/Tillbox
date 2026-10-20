@@ -112,6 +112,10 @@ func (a *API) overview(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	ledgers, err := a.enabledLedgers(ctx)
+	if err != nil {
+		return err
+	}
 	ok(w, map[string]any{
 		"today":                  total[days-1],
 		"days":                   total,
@@ -121,7 +125,7 @@ func (a *API) overview(w http.ResponseWriter, r *http.Request) error {
 		"dead_notifications":     dead,
 		"retrying_notifications": retrying,
 		"open_alerts":            alerts,
-		"ledgers":                a.enabledLedgers(),
+		"ledgers":                ledgers,
 	})
 	return nil
 }

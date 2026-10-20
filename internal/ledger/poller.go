@@ -27,6 +27,11 @@ const (
 	statePrefix      = "ledger_state:" // 后面接渠道实例键
 )
 
+// StaleAfter 是多久没有成功查账就算停摆：监控告警和后台的查账状态都按它判断。
+func StaleAfter(pay settings.Payment) time.Duration {
+	return max(5*time.Minute, time.Duration(pay.NormalInterval)*3*time.Second)
+}
+
 // 补扫：每分钟回看 10 分钟、每小时回看 6 小时、每天回看 7 天。
 // 第一档并进主窗口一起拉；后两档和停机太久时主窗口没覆盖到的区间进补扫队列，
 // 每轮在主窗口之后最多拉一段，补扫慢了或失败了都不耽误最近付款的确认。
@@ -73,6 +78,9 @@ type Status struct {
 	Source          string `json:"source"`           // 渠道实例键
 	ChannelID       int64  `json:"channel_id"`       // 渠道编号
 	BacklogSegments int    `json:"backlog_segments"` // 补扫队列还剩几段要拉
+	// ReadySince 是渠道这次进程里从什么时候起具备查账条件（配置齐全、已启用），不具备时为 0。
+	// 一直没成功查过账时，用它判断是不是停摆了。
+	ReadySince int64 `json:"ready_since"`
 }
 
 type Poller struct {
@@ -84,12 +92,13 @@ type Poller struct {
 	// Now 可以在测试里替换。
 	Now func() time.Time
 
-	mu      sync.Mutex
-	state   State
-	running bool
-	active  bool
-	nextAt  time.Time
-	loaded  bool
+	mu         sync.Mutex
+	state      State
+	running    bool
+	active     bool
+	nextAt     time.Time
+	loaded     bool
+	readySince time.Time
 }
 
 func NewPoller(db *bun.DB, l *Ledger, src channel.LedgerSource, st *settings.Service) *Poller {
@@ -112,6 +121,9 @@ func (p *Poller) Status() Status {
 	defer p.mu.Unlock()
 	key := p.source.Key()
 	st := Status{State: p.state, Running: p.running, Active: p.active, NextAt: store.Ms(p.nextAt), Source: key, ChannelID: store.ChannelID(key)}
+	if !p.readySince.IsZero() {
+		st.ReadySince = store.Ms(p.readySince)
+	}
 	st.Backlog = slices.Clone(p.state.Backlog)
 	span := p.source.MaxSpan().Milliseconds()
 	for _, j := range st.Backlog {
@@ -232,6 +244,7 @@ func (p *Poller) RunOnce(ctx context.Context) error {
 	}
 	if err := p.source.Ready(ctx); err != nil {
 		p.mu.Lock()
+		p.readySince = time.Time{}
 		p.state.LastRunAt = store.Ms(p.Now())
 		p.state.BackoffUntil = store.Ms(p.Now().Add(notReadyRetry))
 		p.state.LastError = err.Error()
@@ -243,6 +256,9 @@ func (p *Poller) RunOnce(ctx context.Context) error {
 		return err
 	}
 	p.mu.Lock()
+	if p.readySince.IsZero() {
+		p.readySince = p.Now()
+	}
 	p.running = true
 	st := p.state
 	st.Backlog = slices.Clone(st.Backlog)

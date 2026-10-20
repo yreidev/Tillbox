@@ -12,7 +12,6 @@ import (
 	"tillbox/internal/channel/registry"
 	"tillbox/internal/channel/upstream"
 	"tillbox/internal/confirm"
-	"tillbox/internal/ledger"
 	"tillbox/internal/store"
 )
 
@@ -27,7 +26,7 @@ type channelView struct {
 	Transactions int64           `json:"transactions"`
 	Merchants    int64           `json:"merchants"`
 	DeleteBlock  string          `json:"delete_block"`       // 不能删除的原因，能删时为空
-	Ledger       *ledger.Status  `json:"ledger,omitempty"`   // 推断型渠道的查账状态
+	Ledger       *ledgerState    `json:"ledger,omitempty"`   // 推断型渠道的查账状态
 	Upstream     *confirm.Status `json:"upstream,omitempty"` // 上游渠道的预下单、查单和回调状态
 }
 
@@ -77,6 +76,10 @@ func (a *API) channelViews(ctx context.Context) ([]channelView, error) {
 		}
 		return 0
 	}
+	stale, err := a.staleAfter(ctx)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]channelView, 0)
 	for _, row := range a.Channels.List() {
 		v := channelView{Channel: row, Key: row.Key(), Config: configView(row),
@@ -89,8 +92,7 @@ func (a *API) channelViews(ctx context.Context) ([]channelView, error) {
 			}
 		}
 		if p := a.Pollers.Get(row.Key()); p != nil {
-			st := p.Status()
-			v.Ledger = &st
+			v.Ledger = &ledgerState{Status: p.Status(), StaleAfter: stale}
 		}
 		if row.Type == store.ChannelEpay {
 			st := a.Confirm.Status(row.Key())

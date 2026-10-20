@@ -3,20 +3,10 @@ import { Button, Tooltip } from '@yreidev/ui'
 import { ArrowRotateRight } from '@gravity-ui/icons'
 import { api } from '../lib/api'
 import { relative, time } from '../lib/format'
+import { ledgerHealth } from '../lib/health'
 import { useNow } from '../lib/now'
 import { ledgerErrorText, type LedgerStatus } from '../lib/types'
-import { StatusDot, cx, toastError, toastOK, type Tone } from '../lib/ui'
-
-// ledgerHealth 把一个经营码渠道的查账状态归成一句话和一个颜色。
-export function ledgerHealth(s: LedgerStatus, now = Date.now()): { tone: Tone; text: string; pulse?: boolean } {
-  if (!s.enabled) return { tone: 'default', text: '已停用' }
-  if (s.failures > 0) return { tone: 'danger', text: '查账失败' }
-  if (s.last_error) return { tone: 'warning', text: '暂不查账' }
-  if (s.running) return { tone: 'accent', text: '查询中', pulse: true }
-  if (s.active) return { tone: 'success', text: '有待付订单，加快查询', pulse: true }
-  if (s.backfill_error) return { tone: 'warning', text: '历史补扫出错' }
-  return { tone: 'success', text: s.last_ok_at ? `正常 · ${relative(s.last_ok_at, now)}查过` : '正常' }
-}
+import { StatusDot, cx, toastError, toastOK } from '../lib/ui'
 
 /**
  * LedgerRow 是一个经营码渠道的查账状态：一行状态，一行进度，出错时再加一行原因。
@@ -56,6 +46,7 @@ export function LedgerRow({ status: s, className }: { status: LedgerStatus; clas
             {backoff && `。${relative(s.backoff_until, now)}重试`}
           </p>
         )}
+        {health.detail && <p className="mt-1.5 text-xs text-danger">{health.detail}</p>}
         {s.backfill_error && (
           <p className="mt-1.5 text-xs text-warning">
             历史补扫连续失败 {s.backfill_failures} 次：{s.backfill_error}
