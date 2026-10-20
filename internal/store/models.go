@@ -228,7 +228,11 @@ const (
 	AnomalyUnmatched = "unmatched" // 无法匹配的收入
 	AnomalyConflict  = "conflict"  // 同一流水号内容变了
 	AnomalyUnlinked  = "unlinked"  // 人工撤销了关联
+	AnomalyInvalid   = "invalid"   // 流水内容解析不了
 )
+
+// ManualAnomalies 是只能人工处理的异常：流水上有这些记录时，自动补认和申诉自动关联都不做。
+var ManualAnomalies = []string{AnomalyConflict, AnomalyAmbiguous, AnomalyDuplicate, AnomalyUnlinked, AnomalyInvalid}
 
 // 异常状态
 const (

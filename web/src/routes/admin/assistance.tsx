@@ -106,6 +106,7 @@ const kinds: Record<string, string> = {
   ambiguous: '归属不明',
   conflict: '流水冲突',
   unlinked: '人工撤销',
+  invalid: '流水解析不了',
 }
 const actionNames: Record<string, string> = {
   admin_associate: '人工关联申诉订单',

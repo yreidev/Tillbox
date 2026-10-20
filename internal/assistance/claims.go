@@ -134,7 +134,7 @@ func (s *Service) findClaimOrder(ctx context.Context, c *store.AssistanceCase) e
 		t := ts[0]
 		if t.Direction == store.DirIn && t.Amount == c.ClaimAmount && c.PaidAt >= t.OccurredAt-2*time.Minute.Milliseconds() && c.PaidAt <= t.OccurredAt+2*time.Minute.Milliseconds() {
 			blocked, e := s.DB.NewSelect().Model((*store.Anomaly)(nil)).Where("transaction_id = ?", t.ID).
-				Where("kind IN (?)", bun.List([]string{store.AnomalyConflict, store.AnomalyAmbiguous, store.AnomalyDuplicate, store.AnomalyUnlinked})).Exists(ctx)
+				Where("kind IN (?)", bun.List(store.ManualAnomalies)).Exists(ctx)
 			if e != nil {
 				return e
 			}

@@ -331,6 +331,67 @@ func TestDedupAndConflict(t *testing.T) {
 	}
 }
 
+func TestInvalidEntry(t *testing.T) {
+	f := newFixture(t)
+	o := f.order("A", 1000)
+	good := f.entry(o.PayAmount, time.Now())
+	bad := channel.Entry{
+		ExternalID: good.ExternalID, Direction: store.DirIn, AlipayOrderNo: good.AlipayOrderNo,
+		Raw: `{"trans_dt":"bad"}`, Invalid: "时间格式不对",
+	}
+	other := f.order("B", 2000)
+	f.ingest(bad, f.entry(other.PayAmount, time.Now()))
+	if f.reload(other).Status != store.OrderPaid {
+		t.Fatal("同一批里能解析的流水应照常对账")
+	}
+	a := f.wantAnomaly(store.AnomalyInvalid, 0)
+	var tx store.Transaction
+	if err := f.DB().NewSelect().Model(&tx).Where("external_id = ?", bad.ExternalID).Scan(f.Ctx); err != nil {
+		t.Fatal(err)
+	}
+	if tx.ID != a.TransactionID || tx.State != store.TxnAnomaly || tx.Raw != bad.Raw || !ledger.Invalid(&tx) {
+		t.Fatalf("解析不了的流水应连原文入库并标成异常：%+v", tx)
+	}
+	if d := time.Since(store.Time(tx.OccurredAt)); d < 0 || d > time.Minute {
+		t.Errorf("时间读不出来时应按入库时刻记，实际 %s", store.Time(tx.OccurredAt))
+	}
+	if err := f.App.Ledger.Link(f.Ctx, tx.ID, o.ID, "admin", ""); err == nil || !strings.Contains(err.Error(), "解析不了") {
+		t.Errorf("解析不了的流水不能关联订单：%v", err)
+	}
+
+	// 再拉到同样解析不了的内容不重复记。
+	f.ingest(bad)
+	if n := len(f.anomalies()); n != 1 {
+		t.Fatalf("同一条坏流水只记一次异常，实际 %d", n)
+	}
+	if f.reload(o).Status == store.OrderPaid {
+		t.Fatal("解析不了的流水不能参与匹配")
+	}
+
+	// 支付宝之后返回能解析的内容：按新内容替换，异常自动处理，订单照常到账。
+	f.ingest(good)
+	got := f.reload(o)
+	if got.Status != store.OrderPaid || got.TxnID != tx.ID {
+		t.Fatalf("能解析后应按新内容对账：%+v", got)
+	}
+	as := f.anomalies()
+	if len(as) != 1 || as[0].Status != store.AnomalyResolved || as[0].ResolvedBy != "系统" {
+		t.Fatalf("解析不了的异常应自动记为已处理：%+v", as)
+	}
+	if err := f.DB().NewSelect().Model(&tx).WherePK().Scan(f.Ctx); err != nil {
+		t.Fatal(err)
+	}
+	if ledger.Invalid(&tx) || tx.Amount != good.Amount || tx.Fingerprint != ledger.Fingerprint(good) {
+		t.Errorf("流水应换成新内容：%+v", tx)
+	}
+
+	// 已经入库的正常流水，再读到解析不了的版本时保留原记录、不记异常。
+	f.ingest(bad)
+	if n := len(f.anomalies()); n != 1 {
+		t.Errorf("正常流水再读到坏内容时不该记异常，实际 %d 条", n)
+	}
+}
+
 func TestLinkUnlinkResolve(t *testing.T) {
 	f := newFixture(t)
 	a := f.order("A", 1000)

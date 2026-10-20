@@ -67,13 +67,19 @@ export interface Transaction {
   biz_desc: string
   kind: string
   raw?: string
+  fingerprint: string
   state: 'new' | 'matched' | 'anomaly' | 'ignored'
   order_id: number
   created_at: number
 }
 
+/** 入库时解析不了的流水：金额和时间不可靠，不能关联订单。前缀和后端 ledger.Invalid 一致。 */
+export function invalidTxn(t: Pick<Transaction, 'fingerprint'>) {
+  return t.fingerprint.startsWith('invalid:')
+}
+
 export type AnomalyKind =
-  'ambiguous' | 'duplicate' | 'late' | 'underpaid' | 'overpaid' | 'unmatched' | 'conflict' | 'unlinked'
+  'ambiguous' | 'duplicate' | 'late' | 'underpaid' | 'overpaid' | 'unmatched' | 'conflict' | 'unlinked' | 'invalid'
 
 export interface Anomaly {
   id: number
@@ -361,6 +367,7 @@ export const anomalyText: Record<AnomalyKind, string> = {
   unmatched: '无法匹配',
   conflict: '流水内容变了',
   unlinked: '撤销了关联',
+  invalid: '流水解析不了',
 }
 
 export const txnStateText: Record<Transaction['state'], string> = {

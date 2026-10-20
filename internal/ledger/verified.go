@@ -43,12 +43,12 @@ func (l *Ledger) LinkVerified(ctx context.Context, txnID, orderID int64, referen
 		return errors.New("付款窗口内存在其他同额订单，需要人工确认归属")
 	}
 	blocked, err := l.db.NewSelect().Model((*store.Anomaly)(nil)).Where("transaction_id = ?", t.ID).
-		Where("kind IN (?)", bun.List([]string{store.AnomalyConflict, store.AnomalyAmbiguous, store.AnomalyDuplicate, store.AnomalyUnlinked})).Exists(ctx)
+		Where("kind IN (?)", bun.List(store.ManualAnomalies)).Exists(ctx)
 	if err != nil {
 		return err
 	}
 	if blocked {
-		return errors.New("流水存在冲突、重复付款、歧义或人工撤销记录，需要人工处理")
+		return errors.New("流水存在冲突、重复付款、歧义、人工撤销或解析不了的记录，需要人工处理")
 	}
 	now := store.Ms(l.Now())
 	err = l.orders.MarkPaid(ctx, o, &t, func(ctx context.Context, tx bun.Tx) error {

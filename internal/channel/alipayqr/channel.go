@@ -2,7 +2,9 @@ package alipayqr
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -143,6 +145,7 @@ func (c *Channel) Client(context.Context) (*Client, error) {
 }
 
 // Fetch 拉 [start, end) 的全部流水。一页装不下时把窗口对半切开再查；切到 1 秒还装不下才翻页。
+// 解析不了的单条流水带着原因返回（Entry.Invalid），不让整段查账失败。
 func (c *Channel) Fetch(ctx context.Context, start, end time.Time) ([]channel.Entry, error) {
 	cl, err := c.Client(ctx)
 	if err != nil {
@@ -156,7 +159,7 @@ func (c *Channel) Fetch(ctx context.Context, start, end time.Time) ([]channel.En
 	for _, it := range items {
 		e, err := toEntry(it)
 		if err != nil {
-			return nil, err
+			e = invalidEntry(it, err)
 		}
 		out = append(out, e)
 	}
@@ -204,6 +207,9 @@ func fetchWindow(ctx context.Context, cl *Client, start, end time.Time) ([]Accou
 }
 
 func toEntry(it AccountLogItem) (channel.Entry, error) {
+	if it.DecodeError != "" {
+		return channel.Entry{}, fmt.Errorf("流水 %s 的格式不对：%s", it.AccountLogID, it.DecodeError)
+	}
 	amount, err := ParseYuan(it.TransAmount)
 	if err != nil {
 		return channel.Entry{}, fmt.Errorf("流水 %s：%w", it.AccountLogID, err)
@@ -231,6 +237,32 @@ func toEntry(it AccountLogItem) (channel.Entry, error) {
 		AlipayOrderNo: it.AlipayOrderNo, MerchantOrderNo: it.MerchantOrderNo,
 		OtherAccount: it.OtherAccount, Memo: it.TransMemo, BizDesc: it.BizDesc, Kind: it.Type, Raw: it.Raw,
 	}, nil
+}
+
+// invalidEntry 是解析不了的一条流水：原文和读得出的字段照存，金额和时间读不出来时留空。
+// 没有流水号时用原文的摘要代替，同一条再出现时不会重复入库。
+func invalidEntry(it AccountLogItem, cause error) channel.Entry {
+	id := it.AccountLogID
+	if id == "" {
+		sum := sha256.Sum256([]byte(it.Raw))
+		id = "invalid:" + hex.EncodeToString(sum[:16])
+	}
+	e := channel.Entry{
+		ExternalID: id, Direction: store.DirIn,
+		AlipayOrderNo: it.AlipayOrderNo, MerchantOrderNo: it.MerchantOrderNo,
+		OtherAccount: it.OtherAccount, Memo: it.TransMemo, BizDesc: it.BizDesc, Kind: it.Type, Raw: it.Raw,
+		Invalid: cause.Error(),
+	}
+	if it.Direction == "支出" {
+		e.Direction = store.DirOut
+	}
+	if amount, err := ParseYuan(it.TransAmount); err == nil {
+		e.Amount = max(amount, -amount)
+	}
+	if at, err := time.ParseInLocation(time.DateTime, strings.TrimSpace(it.TransDt), epay.CST); err == nil {
+		e.OccurredAt = at
+	}
+	return e
 }
 
 // Test 用当前配置查最近一分钟的流水，检查凭据和权限。

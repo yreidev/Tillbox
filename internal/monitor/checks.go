@@ -44,6 +44,7 @@ var anomalyText = map[string]string{
 	store.AnomalyUnmatched: "无法匹配",
 	store.AnomalyConflict:  "流水内容变了",
 	store.AnomalyUnlinked:  "撤销了关联",
+	store.AnomalyInvalid:   "流水解析不了",
 }
 
 // Checker 按规则检查一遍，列出现在的问题。

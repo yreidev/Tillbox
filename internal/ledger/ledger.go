@@ -39,11 +39,21 @@ func New(db *bun.DB, orders *order.Service) *Ledger {
 }
 
 // Fingerprint 是流水内容的摘要。同一个流水号再出现时内容变了，就记冲突。
+// 解析不了的流水按原文算，带 invalidPrefix 前缀。
 func Fingerprint(e channel.Entry) string {
 	h := sha256.New()
+	if e.Invalid != "" {
+		h.Write([]byte(e.Raw))
+		return invalidPrefix + hex.EncodeToString(h.Sum(nil))[:24]
+	}
 	fmt.Fprintf(h, "%s|%d|%d|%s|%s|%s", e.Direction, e.Amount, e.OccurredAt.Unix(), e.AlipayOrderNo, e.MerchantOrderNo, e.OtherAccount)
 	return hex.EncodeToString(h.Sum(nil))[:32]
 }
+
+const invalidPrefix = "invalid:"
+
+// Invalid 判断一笔流水入库时是不是解析不了：它的金额和时间不可靠。
+func Invalid(t *store.Transaction) bool { return strings.HasPrefix(t.Fingerprint, invalidPrefix) }
 
 // Result 是一批流水的处理结果。
 type Result struct {
@@ -54,6 +64,7 @@ type Result struct {
 }
 
 // Ingest 入库一批流水并对账。同一个流水号只入库一次；内容变了记冲突，不覆盖原记录。
+// 解析不了的流水记异常、不参与匹配；同一流水号之后能解析了，按新内容替换并重新对账。
 // 入库和对账分两步：先把整批流水存下来，再对账所有还没处理的收入流水，
 // 所以上一轮入库后对账出错留下的流水，这一轮会接着对账。
 func (l *Ledger) Ingest(ctx context.Context, channelKey string, entries []channel.Entry) (Result, error) {
@@ -66,7 +77,14 @@ func (l *Ledger) Ingest(ctx context.Context, channelKey string, entries []channe
 			Where("channel = ?", channelKey).Where("external_id = ?", e.ExternalID).Limit(1).Scan(ctx)
 		fp := Fingerprint(e)
 		if err == nil {
-			if t.Fingerprint != fp {
+			switch {
+			case e.Invalid != "":
+				// 这次读出来解析不了，保留已经入库的记录。
+			case Invalid(&t):
+				if err := l.repair(ctx, &t, e, fp); err != nil {
+					return res, err
+				}
+			case t.Fingerprint != fp:
 				added, err := l.recordConflict(ctx, &t, e, fp)
 				if err != nil {
 					return res, err
@@ -79,6 +97,14 @@ func (l *Ledger) Ingest(ctx context.Context, channelKey string, entries []channe
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
 			return res, err
+		}
+		if e.Invalid != "" {
+			if err := l.addInvalid(ctx, channelKey, e, fp); err != nil {
+				return res, err
+			}
+			res.New++
+			res.Anomalies++
+			continue
 		}
 		now := store.Ms(l.Now())
 		t = store.Transaction{
@@ -149,6 +175,59 @@ func (l *Ledger) recordConflict(ctx context.Context, t *store.Transaction, e cha
 	detail := fmt.Sprintf("同一流水号再次出现但内容变了，没有覆盖原记录。新内容：方向 %s，金额 %s，时间 %s，对方 %s，支付宝订单号 %s。%s\n新原文：%s",
 		e.Direction, epay.FormatCents(e.Amount), epay.FormatTime(e.OccurredAt), e.OtherAccount, e.AlipayOrderNo, marker, e.Raw)
 	return true, l.addAnomaly(ctx, l.db, store.AnomalyConflict, t, t.OrderID, detail, false)
+}
+
+// addInvalid 把解析不了的流水连同原文入库，记一条异常等人工核对，不参与匹配。
+// 时间读不出来时按入库时刻记，免得归档任务把原文当成很早的流水提前归档。
+func (l *Ledger) addInvalid(ctx context.Context, channelKey string, e channel.Entry, fp string) error {
+	now := l.Now()
+	at := e.OccurredAt
+	detail := "支付宝返回的这条流水解析不了，没有参与对账：" + e.Invalid + "。请对照支付宝账单核实这笔款项；支付宝之后返回能解析的内容时，会自动按新内容重新对账。"
+	if at.IsZero() {
+		at = now
+		detail += "时间读不出来，暂按入库时刻记。"
+	}
+	t := &store.Transaction{
+		Channel: channelKey, ExternalID: e.ExternalID, Direction: e.Direction, Amount: e.Amount,
+		OccurredAt: store.Ms(at), AlipayOrderNo: e.AlipayOrderNo, MerchantOrderNo: e.MerchantOrderNo,
+		OtherAccount: e.OtherAccount, Memo: e.Memo, BizDesc: e.BizDesc, Kind: e.Kind, Raw: e.Raw,
+		Fingerprint: fp, State: store.TxnAnomaly, CreatedAt: store.Ms(now), UpdatedAt: store.Ms(now),
+	}
+	return l.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewInsert().Model(t).Exec(ctx); err != nil {
+			return err
+		}
+		return l.addAnomaly(ctx, tx, store.AnomalyInvalid, t, 0, detail, false)
+	})
+}
+
+// repair 用支付宝再次返回的、能解析的内容替换之前解析不了的流水，异常记为已处理，流水回到待对账。
+// 已经人工关联了订单的不动。
+func (l *Ledger) repair(ctx context.Context, t *store.Transaction, e channel.Entry, fp string) error {
+	if t.OrderID != 0 {
+		return nil
+	}
+	now := store.Ms(l.Now())
+	t.Direction, t.Amount, t.OccurredAt = e.Direction, e.Amount, store.Ms(e.OccurredAt)
+	t.AlipayOrderNo, t.MerchantOrderNo, t.OtherAccount = e.AlipayOrderNo, e.MerchantOrderNo, e.OtherAccount
+	t.Memo, t.BizDesc, t.Kind, t.Raw, t.Fingerprint = e.Memo, e.BizDesc, e.Kind, e.Raw, fp
+	t.State, t.UpdatedAt = store.TxnNew, now
+	if t.Direction != store.DirIn {
+		t.State = store.TxnIgnored
+	}
+	return l.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewUpdate().Model(t).
+			Column("direction", "amount", "occurred_at", "alipay_order_no", "merchant_order_no", "other_account",
+				"memo", "biz_desc", "kind", "raw", "fingerprint", "state", "updated_at").
+			WherePK().Exec(ctx); err != nil {
+			return err
+		}
+		_, err := tx.NewUpdate().Model((*store.Anomaly)(nil)).
+			Set("status = ?", store.AnomalyResolved).Set("resolved_at = ?", now).
+			Set("resolved_by = ?", "系统").Set("note = ?", "支付宝再次返回的内容能解析了，已按新内容重新对账").
+			Where("transaction_id = ?", t.ID).Where("kind = ?", store.AnomalyInvalid).Where("status = ?", store.AnomalyOpen).Exec(ctx)
+		return err
+	})
 }
 
 func (l *Ledger) addAnomaly(ctx context.Context, db bun.IDB, kind string, t *store.Transaction, orderID int64, detail string, markTxn bool) error {
@@ -318,6 +397,9 @@ func (l *Ledger) Link(ctx context.Context, txnID, orderID int64, actor, note str
 	}
 	if t.State == store.TxnMatched {
 		return errors.New("这笔流水已经关联了订单，要改先撤销原来的关联")
+	}
+	if Invalid(&t) {
+		return errors.New("这笔流水解析不了，金额和时间不可靠，不能关联订单；请对照支付宝账单核实后处理异常")
 	}
 	o, err := l.orders.ByID(ctx, orderID)
 	if err != nil {

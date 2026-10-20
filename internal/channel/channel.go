@@ -124,6 +124,9 @@ type Entry struct {
 	BizDesc         string
 	Kind            string
 	Raw             string // 渠道返回的原文（JSON）
+	// Invalid 是这条流水解析不了的原因。非空时其他字段只填读得出的部分，
+	// 入库后记异常等人工核对，不参与匹配；一条坏流水不影响同一批的其他流水。
+	Invalid string
 }
 
 // LedgerSource 由推断型渠道实现：按时间窗口拉流水。窗口左闭右开。

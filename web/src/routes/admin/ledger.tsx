@@ -8,7 +8,7 @@ import { OrderDetail } from '../../components/order-detail'
 import { api, channelsQuery, overviewQuery, query } from '../../lib/api'
 import { time, yuan } from '../../lib/format'
 import type { Anomaly, LedgerStatus, Page, Transaction } from '../../lib/types'
-import { anomalyText, txnStateText } from '../../lib/types'
+import { anomalyText, invalidTxn, txnStateText } from '../../lib/types'
 import {
   DataTable,
   Empty,
@@ -211,7 +211,7 @@ function Anomalies({ search, resolved }: { search: Search; resolved: boolean }) 
         ) : (
           items.map((a, i) => {
             const t = a.transaction
-            const canLink = !resolved && !!t && t.direction === 'in' && t.order_id === 0
+            const canLink = !resolved && !!t && t.direction === 'in' && t.order_id === 0 && !invalidTxn(t)
             return (
               <Fragment key={a.id}>
                 {i > 0 && <Separator />}
@@ -306,6 +306,8 @@ function Transactions({ search }: { search: Search }) {
   const order = (t: Transaction) =>
     t.order_id ? (
       <OrderLink tradeNo={q.data?.trade_nos[t.order_id] ?? t.order_id} onClick={() => setDetail(t.order_id)} />
+    ) : invalidTxn(t) ? (
+      <span className="text-muted">解析不了</span>
     ) : t.direction === 'in' ? (
       <Button size="sm" variant="secondary" onPress={() => setLinking(t)}>
         关联订单

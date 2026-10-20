@@ -59,6 +59,7 @@ type AccountLogItem struct {
 	TransMemo           string `json:"trans_memo"`
 	Type                string `json:"type"`
 	Raw                 string `json:"-"`
+	DecodeError         string `json:"-"` // 这一条的 JSON 读不了时的原因，其他字段只有流水号
 }
 
 // AccountLogPage 是一页查询结果。
@@ -219,7 +220,8 @@ func (c *Client) QueryAccountLog(ctx context.Context, start, end time.Time, page
 	for _, r := range raw.DetailList {
 		var it AccountLogItem
 		if err := json.Unmarshal(r, &it); err != nil {
-			return nil, fmt.Errorf("支付宝流水格式不对：%w", err)
+			// 一条读不了不影响整页：留下原文和流水号，由渠道记成解析不了的流水。
+			it = AccountLogItem{AccountLogID: looseLogID(r), DecodeError: err.Error()}
 		}
 		it.Raw = string(r)
 		page.Items = append(page.Items, it)
@@ -253,6 +255,19 @@ func (f *flexString) UnmarshalJSON(b []byte) error {
 		*f = flexString(n.String())
 	}
 	return nil
+}
+
+// looseLogID 从读不了的一条明细里尽量取出流水号，取不到时返回空。
+func looseLogID(b []byte) string {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(b, &m) != nil {
+		return ""
+	}
+	var id flexString
+	if json.Unmarshal(m["account_log_id"], &id) != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(id))
 }
 
 // UnmarshalJSON 逐个字段按 flexString 读，未知字段忽略。

@@ -24,10 +24,11 @@ import (
 )
 
 type item struct {
-	id     string
-	at     time.Time
-	amount string
-	dir    string
+	id       string
+	at       time.Time
+	amount   string
+	dir      string
+	override map[string]any // 覆盖返回的字段，用来造格式不对的流水
 }
 
 // fakeAlipay 是本地的支付宝开放平台：校验请求签名，按时间窗口返回账务明细，给响应签名。
@@ -92,11 +93,15 @@ func (f *fakeAlipay) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	to := min(from+f.limit, len(hits))
 	list := []map[string]any{}
 	for _, it := range hits[from:to] {
-		list = append(list, map[string]any{
+		m := map[string]any{
 			"account_log_id": it.id, "alipay_order_no": "2026" + it.id, "trans_dt": it.at.In(epay.CST).Format(time.DateTime),
 			"trans_amount": it.amount, "direction": it.dir, "other_account": "张*(zha***@example.com)", "type": "在线支付",
 			"complement_info": map[string]any{"k": "v"}, "balance": 12.5,
-		})
+		}
+		for k, v := range it.override {
+			m[k] = v
+		}
+		list = append(list, m)
 	}
 	res := map[string]any{"detail_list": list}
 	if f.numeric {
@@ -235,6 +240,45 @@ func TestDirectionAndAmount(t *testing.T) {
 		if e.Direction != w.dir || e.Amount != w.amount {
 			t.Errorf("%s：%s %d，应为 %s %d", e.ExternalID, e.Direction, e.Amount, w.dir, w.amount)
 		}
+	}
+}
+
+func TestFetchKeepsInvalidItems(t *testing.T) {
+	_, f, ch := setup(t)
+	f.items = []item{
+		{id: "I1", at: base, amount: "1.00", dir: "收入"},
+		{id: "I2", at: base, amount: "2.00", dir: "收入", override: map[string]any{"trans_dt": "2026-02-30 10:00:00"}},
+		{id: "I3", at: base, amount: "3.001", dir: "收入"},
+		{id: "I4", at: base, amount: "4.00", dir: "收入", override: map[string]any{"account_log_id": nil, "trans_amount": true}},
+	}
+	got, err := ch.Fetch(context.Background(), base, base.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("一条流水解析不了不该让整段查账失败：%v", err)
+	}
+	if len(got) != 4 {
+		t.Fatalf("应返回 4 条，实际 %d", len(got))
+	}
+	byID := map[string]channel.Entry{}
+	for _, e := range got {
+		byID[e.ExternalID] = e
+	}
+	if e := byID["I1"]; e.Invalid != "" || e.Amount != 100 {
+		t.Errorf("正常流水不受影响：%+v", e)
+	}
+	if e := byID["I2"]; !strings.Contains(e.Invalid, "时间") || e.Amount != 200 || !e.OccurredAt.IsZero() || e.Raw == "" {
+		t.Errorf("时间不对的流水应带原因和读得出的金额：%+v", e)
+	}
+	if e := byID["I3"]; !strings.Contains(e.Invalid, "金额") || e.Amount != 0 || !e.OccurredAt.Equal(base) {
+		t.Errorf("金额不对的流水应带原因和读得出的时间：%+v", e)
+	}
+	var unknown channel.Entry
+	for id, e := range byID {
+		if strings.HasPrefix(id, "invalid:") {
+			unknown = e
+		}
+	}
+	if unknown.Invalid == "" || !strings.Contains(unknown.Raw, `"trans_amount":true`) {
+		t.Errorf("读不了且没有流水号的一条应按原文摘要记下：%+v", byID)
 	}
 }
 
