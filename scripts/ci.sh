@@ -5,7 +5,7 @@ set -eu
 cd "$(dirname "$0")/.."
 
 make build
-make lint vuln test check test-race
+make lint vuln test check test-race e2e
 
 name="tillbox-ci-pg-$$"
 docker run -d --rm --name "$name" \

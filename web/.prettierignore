@@ -2,3 +2,6 @@ src/routeTree.gen.ts
 pnpm-lock.yaml
 icons/
 public/
+test-results/
+playwright-report/
+e2e/.data/

@@ -15,7 +15,7 @@ GOBIN := $(or $(shell $(GO) env GOBIN),$(shell $(GO) env GOPATH)/bin)
 # 并发敏感的包，再开 race 检测跑一遍
 RACE_PKGS := ./internal/order ./internal/ledger ./internal/notify ./internal/admin ./internal/maintenance ./internal/assistance ./internal/confirm ./internal/monitor
 
-.PHONY: build web test test-race test-pg check ci release image tools deps lint fmt vuln
+.PHONY: build web test test-race test-pg e2e check ci release image tools deps lint fmt vuln
 
 # 目标按写的顺序一个个跑：lint 要先装好前端依赖，几个重任务同时跑也会抢内存。make -j 不影响这里。
 .NOTPARALLEL:
@@ -40,6 +40,10 @@ test-pg:
 	@test -n "$$TILLBOX_TEST_PG_DSN" || { echo '需要设置 TILLBOX_TEST_PG_DSN，见 docs/development.md' >&2; exit 1; }
 	$(GO) test -p 2 ./...
 
+# 浏览器逐页检查（Playwright）：起两个演示实例打开所有页面。要先 make build，浏览器装法见 docs/development.md
+e2e:
+	$(PNPM) --dir web exec playwright test -c e2e
+
 check:
 	$(GO) vet -p 4 ./...
 	$(PNPM) --dir web typecheck
@@ -63,9 +67,10 @@ tools:
 	$(GO) install -p 4 golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
 	uv tool install --force ruff@$(RUFF_VERSION)
 
-# 本机开发：检查工具之外再装前端依赖和提交钩子
+# 本机开发：检查工具之外再装前端依赖、浏览器检查用的 Chromium 和提交钩子
 deps: tools
 	$(PNPM) --dir web install --frozen-lockfile
+	$(PNPM) --dir web exec playwright install chromium
 	$(GO) install -p 4 github.com/zricethezav/gitleaks/v8@$(GITLEAKS_VERSION)
 	$(GO) install -p 4 github.com/evilmartians/lefthook/v2@$(LEFTHOOK_VERSION)
 	$(GOBIN)/lefthook install

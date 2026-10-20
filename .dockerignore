@@ -12,6 +12,9 @@ bin
 data
 web/node_modules
 web/tsconfig.tsbuildinfo
+web/e2e/.data
+web/test-results
+web/playwright-report
 internal/webui/dist
 *.test
 coverage.out

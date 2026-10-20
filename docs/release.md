@@ -72,6 +72,7 @@
 | `make test` | Go 测试（SQLite）、前端 Vitest、巡检脚本测试 |
 | `make check` | Go vet、TypeScript 类型检查 |
 | `make test-race` | 并发相关的包开 race 检测再跑一遍 |
+| `make e2e` | 浏览器逐页检查：两个演示实例 × 桌面和手机 × 浅色和深色。本机要先装 Chromium（`make deps` 会装），见 [development.md](development.md#浏览器逐页检查) |
 | `make test-pg` | 用 PostgreSQL 再跑一遍 Go 测试；本机由脚本临时起容器，跑完删掉 |
 
 ## 出错时

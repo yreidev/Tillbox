@@ -5,6 +5,10 @@
 !/internal/webui/dist/.gitkeep
 /web/node_modules/
 /web/tsconfig.tsbuildinfo
+# 浏览器检查的演示实例数据、结果和报告
+/web/e2e/.data/
+/web/test-results/
+/web/playwright-report/
 *.test
 coverage.out
 __pycache__/

@@ -12,7 +12,7 @@ make check
 
 `make build` 先按锁文件安装并构建前端，再编译嵌入前端的 `bin/tillbox`。只执行 `go build` 不会更新前端产物。`make test` 依次跑 Go 测试、前端测试和巡检脚本的测试：Go 测试默认使用各测试自己的临时 SQLite 数据库，支付宝请求使用本地假服务器；前端用 Vitest 只测纯逻辑（金额和时间的显示、查询参数、本机付款记录的过滤、渠道运行情况的说法），测试文件和被测代码放在一起，命名为 `*.test.ts`。`make check` 运行 Go vet 和 TypeScript 类型检查。
 
-发版前要跑 `make ci`：和 CI 相同的全部检查，包括 lint、漏洞检查、race 检测和 PostgreSQL 测试（需要 Docker，脚本临时起一个容器，跑完删掉）。各步骤见 [release.md](release.md#本机-ci)。
+发版前要跑 `make ci`：和 CI 相同的全部检查，包括 lint、漏洞检查、race 检测、浏览器逐页检查和 PostgreSQL 测试（需要 Docker，脚本临时起一个容器，跑完删掉）。各步骤见 [release.md](release.md#本机-ci)。
 
 开发预览用两个终端：
 
@@ -37,7 +37,7 @@ Vite 将 API 请求转发到后端。打开开发服务器给出的 `/admin` 地
 make deps
 ```
 
-它按锁文件装前端依赖，按 `Makefile` 开头写的版本安装 golangci-lint、govulncheck、gitleaks、lefthook（装到 `go env GOPATH` 下的 `bin`）和 ruff（用 `uv tool` 装到 `~/.local/bin`），最后装上提交钩子。这两个目录要在 `PATH` 里。升级工具就改 `Makefile` 里的版本号再跑一次。CI 只装 lint 和漏洞检查要用的工具（`make tools`）。
+它按锁文件装前端依赖和浏览器检查用的 Chromium，按 `Makefile` 开头写的版本安装 golangci-lint、govulncheck、gitleaks、lefthook（装到 `go env GOPATH` 下的 `bin`）和 ruff（用 `uv tool` 装到 `~/.local/bin`），最后装上提交钩子。这两个目录要在 `PATH` 里。升级工具就改 `Makefile` 里的版本号再跑一次。CI 只装 lint 和漏洞检查要用的工具（`make tools`）。
 
 | 命令 | 作用 |
 | --- | --- |
@@ -45,6 +45,7 @@ make deps
 | `make fmt` | 按规范格式化全部代码：Go 用 gofmt 和 goimports，前端用 Prettier（不加分号、单引号、行宽 120、Tailwind 类名排序），Python 用 ruff |
 | `make vuln` | 用 govulncheck 查 Go 依赖里实际调用到的已知漏洞 |
 | `make test-race` | 订单、流水、通知等并发相关的包开 race 检测再跑一遍 Go 测试 |
+| `make e2e` | 浏览器逐页检查，见下文[浏览器逐页检查](#浏览器逐页检查) |
 
 编辑器读 `.editorconfig`：统一 UTF-8、LF、文件末尾换行，Go 和 Makefile 用 Tab，其余用空格。
 
@@ -135,6 +136,21 @@ TILLBOX_EPAY_SDK=/path/to/epay-sdk \
 放在自动刷新页面里的表单（如运维页的保留期）用 `key` 绑定服务端数据，数据变了才重建表单，避免刷新时冲掉正在填写的内容。对外页面只引 `web/src/lib/ui-base.tsx` 和 `ui-form.tsx`，不要引 `ui.tsx`，否则收银台会连带下载后台组件。
 
 TanStack Router 自动生成 `web/src/routeTree.gen.ts`，生成文件纳入版本管理。页面按路由拆包，收银台不加载后台页面。二维码绘制使用 `uqr`，上传图片识别使用 `zxing-wasm`，WASM 随构建产物提供。
+
+## 浏览器逐页检查
+
+`make e2e` 用 Playwright 起两个演示模式的 Tillbox（用 `bin/tillbox`，要先 `make build`）：一个空数据，看空列表的兜底；一个由 `web/e2e/setup.ts` 通过接口造好数据（两个商户、待付和已付订单、两条对不上订单的流水异常（一笔少付、一笔金额谁也对不上）、一条付款申诉），看各种状态。每个实例按桌面和手机宽度、浅色和深色各打开一遍所有后台页面和对外页面，检查：
+
+- 没有脚本异常和控制台错误；
+- 没落到路由的出错页，后台页面没被跳回登录页；
+- 页面不横向滚动。
+
+两个实例只监听 `127.0.0.1:18591` 和 `127.0.0.1:18592`，数据目录在 `web/e2e/.data/`，每次运行前清空；检查跑完 Playwright 会停掉它们。Chromium 由 `make deps` 装，版本跟着 `web/package.json` 里的 `@playwright/test`；单独装用 `pnpm --dir web exec playwright install chromium`，缺系统库时加 `--with-deps`（要 sudo）。
+
+- 只跑一部分：`pnpm --dir web exec playwright test -c e2e --project setup --project data-desktop-light`。项目名是 `<empty|data>-<desktop|mobile>-<light|dark>`，`setup` 负责登录和造数据，不能省。
+- 改版后人工过一遍：加环境变量 `E2E_SCREENSHOTS=1`，每页的整页截图存到 `web/test-results/<用例>/page.png`。
+- 没过时 `web/test-results/` 里有截图和 trace，用 `pnpm --dir web exec playwright show-trace <trace.zip>` 打开；CI 没过时上传 HTML 报告（附件 `playwright-report`）。
+- 新增页面要加进 `web/e2e/pages.spec.ts` 的页面列表。
 
 ## 验证范围
 

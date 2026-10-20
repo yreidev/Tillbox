@@ -5,8 +5,8 @@ import globals from 'globals'
 import tseslint from 'typescript-eslint'
 
 export default defineConfig([
-  // 路由表由 TanStack Router 生成
-  globalIgnores(['src/routeTree.gen.ts', '.tanstack/']),
+  // 路由表由 TanStack Router 生成；浏览器检查的报告和演示实例的数据目录是运行时生成的
+  globalIgnores(['src/routeTree.gen.ts', '.tanstack/', 'test-results/', 'playwright-report/', 'e2e/.data/']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [js.configs.recommended, tseslint.configs.recommendedTypeChecked, reactHooks.configs.flat.recommended],
