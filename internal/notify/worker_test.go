@@ -3,6 +3,7 @@ package notify_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -12,10 +13,15 @@ import (
 	"tillbox/internal/store"
 )
 
-// paidOrder 下一单并付款，返回平台订单号。通知还没发。
+// paidOrder 用一个新商户下一单并付款。通知还没发。
 func paidOrder(t *testing.T, e *apptest.Env, notifyURL string) *store.Order {
 	t.Helper()
-	m := e.NewMerchant(nil)
+	return payOrder(t, e, e.NewMerchant(nil), notifyURL)
+}
+
+// payOrder 用商户 m 下一单并付款。通知还没发。
+func payOrder(t *testing.T, e *apptest.Env, m *apptest.Merchant, notifyURL string) *store.Order {
+	t.Helper()
 	res := e.PostForm("/mapi.php", m.SignMD5(map[string]string{
 		"type": "alipay", "out_trade_no": "N" + strconv.FormatInt(time.Now().UnixNano(), 10), "notify_url": notifyURL,
 		"name": "x", "money": "1", "clientip": "1.1.1.1",
@@ -96,6 +102,41 @@ func TestRetrySchedule(t *testing.T) {
 	}
 	if len(attempts) != len(notify.Schedule)+1 {
 		t.Errorf("每次投递都要留记录：%d", len(attempts))
+	}
+}
+
+// 一个商户积压了很多到期通知时，一轮最多发它 2 条，其他商户的照常发；剩下的后面几轮接着发。
+func TestRoundRobinAcrossMerchants(t *testing.T) {
+	e := apptest.New(t)
+	e.Hook.Reply(http.StatusOK, "fail")
+	busy := e.NewMerchant(nil)
+	var backlog []*store.Order
+	for range 5 {
+		backlog = append(backlog, payOrder(t, e, busy, e.Hook.URL+"/busy"))
+	}
+	other := payOrder(t, e, e.NewMerchant(nil), e.Hook.URL+"/other")
+	attempts := func() []int {
+		var out []int
+		for _, o := range backlog {
+			out = append(out, load(t, e, o.ID).Attempts)
+		}
+		return out
+	}
+
+	e.Deliver()
+	if got := load(t, e, other.ID).Attempts; got != 1 {
+		t.Errorf("其他商户的通知应在第一轮发出，实际 %d 次", got)
+	}
+	if got := attempts(); !slices.Equal(got, []int{1, 1, 0, 0, 0}) {
+		t.Errorf("积压的商户一轮只发最早到期的 2 条：%v", got)
+	}
+	e.Deliver()
+	e.Deliver()
+	if got := attempts(); !slices.Equal(got, []int{1, 1, 1, 1, 1}) {
+		t.Errorf("后面几轮应接着发完积压的：%v", got)
+	}
+	if got := len(e.Hook.Got()); got != 6 {
+		t.Errorf("一共应发 6 次，实际 %d", got)
 	}
 }
 

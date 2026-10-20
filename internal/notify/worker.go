@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -26,6 +27,14 @@ var Schedule = []time.Duration{
 
 // minGap 是错过时间点（例如停机后）补发时，两次投递之间的最短间隔。
 const minGap = 30 * time.Second
+
+// 到期的通知按商户轮流领取：每轮每个商户按到期先后最多取 perMerchant 条，一轮最多 perRound 条。
+// 某个商户的通知地址很慢或连不上、积压很多时，它一轮最多占这么多个发送位，其他商户的通知照常发；
+// 一轮发完还有到期的就马上接着发下一轮。
+const (
+	perMerchant = 2
+	perRound    = 100
+)
 
 type Worker struct {
 	db     *bun.DB
@@ -76,8 +85,12 @@ func (w *Worker) Run(ctx context.Context) {
 	t := time.NewTicker(2 * time.Second)
 	defer t.Stop()
 	for {
-		if err := w.RunDue(ctx); err != nil && ctx.Err() == nil {
+		more, err := w.runDue(ctx)
+		if err != nil && ctx.Err() == nil {
 			slog.Error("通知队列出错", "err", err)
+		}
+		if more && ctx.Err() == nil {
+			continue
 		}
 		select {
 		case <-ctx.Done():
@@ -88,27 +101,48 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 }
 
-// RunDue 投递所有到期的通知。
+// RunDue 投递一轮到期的通知，规则见 perMerchant。
 func (w *Worker) RunDue(ctx context.Context) error {
-	var due []store.Notification
-	err := w.db.NewSelect().Model(&due).
-		Where("status = ?", store.NotifyPending).
-		Where("next_at <= ?", store.Ms(w.Now())).
-		Order("next_at ASC").Limit(100).Scan(ctx)
-	if err != nil {
-		return err
+	_, err := w.runDue(ctx)
+	return err
+}
+
+// runDue 投递一轮到期的通知。more 表示还有到期的没轮上；这一轮有投递出错时不算，免得出错的通知被马上反复重试。
+func (w *Worker) runDue(ctx context.Context) (more bool, err error) {
+	var due []struct {
+		OrderID int64 `bun:"order_id"`
+		Seq     int   `bun:"seq"`
 	}
+	// seq 是通知在自己商户里的到期先后；多取一条用来判断还有没有剩下的。
+	err = w.db.NewRaw(`SELECT order_id, seq FROM (
+		SELECT n.order_id, n.next_at, ROW_NUMBER() OVER (PARTITION BY o.merchant_id ORDER BY n.next_at, n.order_id) AS seq
+		FROM notifications AS n JOIN orders AS o ON o.id = n.order_id
+		WHERE n.status = ? AND n.next_at <= ?
+	) AS due WHERE seq <= ? ORDER BY seq, next_at, order_id LIMIT ?`,
+		store.NotifyPending, store.Ms(w.Now()), perMerchant+1, perRound+1).Scan(ctx, &due)
+	if err != nil {
+		return false, err
+	}
+	var failed atomic.Bool
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(8)
-	for _, n := range due {
+	taken := 0
+	for _, d := range due {
+		if d.Seq > perMerchant || taken == perRound {
+			more = true
+			continue
+		}
+		taken++
 		g.Go(func() error {
-			if _, err := w.attempt(ctx, n.OrderID, false); err != nil {
-				slog.Warn("通知投递出错", "order_id", n.OrderID, "err", err)
+			if _, err := w.attempt(ctx, d.OrderID, false); err != nil {
+				failed.Store(true)
+				slog.Warn("通知投递出错", "order_id", d.OrderID, "err", err)
 			}
 			return nil
 		})
 	}
-	return g.Wait()
+	err = g.Wait()
+	return more && !failed.Load(), err
 }
 
 // Resend 手动重发一次。不改变自动重试的时间点；送达后队列状态变成成功。
