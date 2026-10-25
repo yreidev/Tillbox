@@ -111,7 +111,8 @@ func TestChannelsAPI(t *testing.T) {
 	if err := e.DB().NewSelect().Model(&row).Where("id = ?", ali.ID).Scan(e.Ctx); err != nil {
 		t.Fatal(err)
 	}
-	if stored, err := alipayqr.ParseConfig(row.Config); err != nil || stored.AppPrivateKey == "" || strings.Contains(stored.AppPrivateKey, "MII") {
+	// 明文私钥是 base64 的 DER，以 MII 开头；密文是随机 base64，可能在中间碰巧出现 MII，只看开头。
+	if stored, err := alipayqr.ParseConfig(row.Config); err != nil || stored.AppPrivateKey == "" || strings.HasPrefix(stored.AppPrivateKey, "MII") {
 		t.Errorf("应用私钥应加密存库：%v", err)
 	}
 	// 导入已有私钥并启用：公钥按私钥算出来。
