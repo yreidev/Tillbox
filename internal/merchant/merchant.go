@@ -271,8 +271,9 @@ func (s *Service) ResetKey(ctx context.Context, id int64) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	now := store.Now()
 	res, err := s.db.NewUpdate().Model((*store.Merchant)(nil)).
-		Set("md5_key = ?", sealed).Set("updated_at = ?", store.Now()).
+		Set("md5_key = ?", sealed).Set(store.ReviseSQL, now, now).
 		Where("id = ?", id).Exec(ctx)
 	if err != nil {
 		return "", err

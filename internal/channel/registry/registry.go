@@ -265,7 +265,8 @@ func (r *Registry) Update(ctx context.Context, id int64, in Input, expected int6
 
 // SaveConfig 直接换掉渠道的配置原文（例如生成新的应用密钥对）。
 func (r *Registry) SaveConfig(ctx context.Context, id int64, cfg string) error {
-	res, err := r.db.NewUpdate().Model((*store.Channel)(nil)).Set("config = ?", cfg).Set("updated_at = ?", store.Now()).Where("id = ?", id).Exec(ctx)
+	now := store.Now()
+	res, err := r.db.NewUpdate().Model((*store.Channel)(nil)).Set("config = ?", cfg).Set(store.ReviseSQL, now, now).Where("id = ?", id).Exec(ctx)
 	if err != nil {
 		return err
 	}

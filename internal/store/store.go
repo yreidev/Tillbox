@@ -113,6 +113,10 @@ var ErrConflict = errors.New("在你打开之后已经在别处改过")
 // Revise 是记录改动后的修改时间：一般是现在，但一定比原来的大，同一毫秒里连改两次版本也会变。
 func Revise(old int64) int64 { return max(Now(), old+1) }
 
+// ReviseSQL 是不先读出原值、直接在 UPDATE 里改修改时间的写法，效果和 Revise 一样：
+// .Set(store.ReviseSQL, now, now)。
+const ReviseSQL = "updated_at = CASE WHEN updated_at < ? THEN ? ELSE updated_at + 1 END"
+
 // Ms 把时间转成 Unix 毫秒。
 func Ms(t time.Time) int64 { return t.UnixMilli() }
 

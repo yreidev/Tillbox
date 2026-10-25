@@ -869,10 +869,18 @@ func TestSaveConflict(t *testing.T) {
 		t.Errorf("保存后修改时间应变大：%d → %d", m.UpdatedAt, saved.UpdatedAt)
 	}
 	expect(t, a.CallIf("PUT", path, merchant.Input{Name: "商城三", Enabled: true}, m.UpdatedAt), http.StatusConflict, "别处改过")
+	// 修改时间比现在还晚（同一毫秒里刚改过，或服务器时钟往回调了）时，重置密钥也要让版本变。
+	future := store.Now() + 60_000
+	if _, err := e.DB().NewUpdate().Model((*store.Merchant)(nil)).Set("updated_at = ?", future).Where("id = ?", m.ID).Exec(e.Ctx); err != nil {
+		t.Fatal(err)
+	}
 	reset := decode[struct {
 		UpdatedAt int64 `json:"updated_at"`
 	}](t, a.Call("POST", path+"/reset-key", nil))
-	expect(t, a.CallIf("PUT", path, merchant.Input{Name: "商城三", Enabled: true}, saved.UpdatedAt), http.StatusConflict, "")
+	if reset.UpdatedAt != future+1 {
+		t.Errorf("重置密钥后修改时间应为 %d，实际 %d", future+1, reset.UpdatedAt)
+	}
+	expect(t, a.CallIf("PUT", path, merchant.Input{Name: "商城三", Enabled: true}, future), http.StatusConflict, "")
 	expect(t, a.CallIf("PUT", path, merchant.Input{Name: "商城三", Enabled: true}, reset.UpdatedAt), http.StatusOK, "")
 
 	// 渠道。
