@@ -225,8 +225,11 @@ export function DateTimeInput({
       {({ state }) => (
         <>
           {label && <Label>{label}</Label>}
-          <DateField.Group fullWidth variant={variant}>
-            <DateField.Input>{(segment) => <DateField.Segment segment={segment} />}</DateField.Input>
+          {/* 窄屏大字号时日期和时间放不下一行，允许把时间折到第二行，日历按钮留在右边 */}
+          <DateField.Group fullWidth variant={variant} className="h-auto min-h-9">
+            <DateField.Input className="min-w-0 flex-wrap">
+              {(segment) => <DateField.Segment segment={segment} />}
+            </DateField.Input>
             <DateField.Suffix>
               <DatePicker.Trigger>
                 <DatePicker.TriggerIndicator />

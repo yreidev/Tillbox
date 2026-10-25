@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { duration, relative, time, yuan } from './format'
+import { bytes, duration, relative, time, yuan } from './format'
 
 describe('yuan', () => {
   it('把分显示成元，固定两位小数', () => {
@@ -51,5 +51,14 @@ describe('duration', () => {
     expect(duration(2 * 3600_000 + 5 * 60_000)).toBe('2 小时 5 分钟')
     expect(duration(27 * 3600_000)).toBe('1 天 3 小时')
     expect(duration(48 * 3600_000 + 59_000)).toBe('2 天')
+  })
+})
+
+describe('bytes', () => {
+  it('按 1024 进位，小于 10 的留一位小数', () => {
+    expect(bytes(512)).toBe('512 B')
+    expect(bytes(1536)).toBe('1.5 KB')
+    expect(bytes(12 * 1024 * 1024)).toBe('12 MB')
+    expect(bytes(3 * 1024 ** 3)).toBe('3.0 GB')
   })
 })

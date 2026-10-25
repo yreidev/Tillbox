@@ -1,7 +1,19 @@
 import { Fragment, useEffect, useEffectEvent, useRef, useState, type ReactNode } from 'react'
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery, type UseQueryResult } from '@tanstack/react-query'
-import { Button, Form, ItemCard, ItemCardGroup, Separator, Spinner, Stepper } from '@yreidev/ui'
+import {
+  Button,
+  Card,
+  Form,
+  ItemCard,
+  ItemCardGroup,
+  Link,
+  Separator,
+  Spinner,
+  Stepper,
+  Surface,
+  Typography,
+} from '@yreidev/ui'
 import {
   ArrowLeft,
   ArrowRotateRight,
@@ -20,7 +32,7 @@ import {
   savedReceipts,
   usePaymentHistory,
 } from '../lib/payment-history'
-import { Copyable, Notice, Panel, Events, Pill, cx, linkClass, toastError, type Tone } from '../lib/ui-base'
+import { Copyable, Empty, Notice, Panel, Events, Pill, cx, enter, toastError, type Tone } from '../lib/ui-base'
 import { CheckboxInput, DateTimeInput, SelectInput, TextAreaInput, TextInput } from '../lib/ui-form'
 
 // 付款自助页：付款人自己查订单、提交付款问题、查看处理进度。三步对应页面上的三块，
@@ -196,17 +208,21 @@ function HelpPage() {
             <span className="truncate text-sm text-muted">付款支持</span>
           </a>
           {fromCashier && (
-            <a href={`/cashier/${fromCashier}`} className={cx(linkClass, 'shrink-0 gap-1 text-sm')}>
+            <Link href={`/cashier/${fromCashier}`} className="shrink-0 gap-1 text-sm">
               <ArrowLeft className="size-3.5" />
               返回收银台
-            </a>
+            </Link>
           )}
         </div>
       </header>
       <main className="mx-auto max-w-6xl px-4 pt-6 pb-12 sm:px-6 sm:pt-10">
         <div className="max-w-2xl">
-          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">付款自助服务</h1>
-          <p className="mt-2 text-muted">先查订单，再核对付款。提交问题后，随时查看处理进度。</p>
+          <Typography.Heading level={1} className="text-2xl sm:text-3xl">
+            付款自助服务
+          </Typography.Heading>
+          <Typography.Paragraph color="muted" className="mt-2">
+            先查订单，再核对付款。提交问题后，随时查看处理进度。
+          </Typography.Paragraph>
         </div>
         <nav className="mt-6">
           <Stepper aria-label="办理步骤" currentStep={step} onStepChange={(i) => scrollTo(steps[i].id)}>
@@ -225,7 +241,7 @@ function HelpPage() {
             ))}
           </Stepper>
         </nav>
-        <div className="mt-6 grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_400px]">
+        <div className="mt-6 grid grid-cols-1 items-start gap-5 lg:grid-cols-[minmax(0,1fr)_400px]">
           <div className="flex min-w-0 flex-col gap-5">
             <section id="help-order" className="scroll-mt-4">
               <Panel title="查询订单" description="用收银台上的平台订单号查询这笔付款的状态。">
@@ -268,7 +284,9 @@ function HelpPage() {
                 )}
                 <div className="mt-6 border-t border-separator pt-5">
                   <div className="flex items-center justify-between gap-3">
-                    <h3 className="text-sm font-medium">最近支付</h3>
+                    <Typography.Heading level={3} className="text-sm font-medium">
+                      最近支付
+                    </Typography.Heading>
                     {history.length > 0 && (
                       <Button
                         size="sm"
@@ -282,14 +300,17 @@ function HelpPage() {
                       </Button>
                     )}
                   </div>
-                  <p className="mt-1 text-xs leading-relaxed text-muted">
+                  <Typography.Paragraph size="xs" color="muted" className="mt-1 leading-relaxed">
                     仅保存在当前浏览器，最多 20 笔、保留 30
                     天。换浏览器、无痕模式或清除网站数据后无法找回。状态以查询结果为准。
-                  </p>
+                  </Typography.Paragraph>
                   {history.length === 0 ? (
-                    <p className="mt-3 rounded-xl bg-surface-secondary px-4 py-3 text-sm text-muted">
-                      暂无记录。可输入订单号查询，或在下方勾选“不知道平台订单号”提交付款问题。
-                    </p>
+                    <Empty
+                      icon={<Clock />}
+                      title="暂无记录"
+                      description="可输入订单号查询，或在下方勾选“不知道平台订单号”提交付款问题。"
+                      className="mt-3 rounded-xl border border-dashed border-separator"
+                    />
                   ) : (
                     <ItemCardGroup variant="outline" className="mt-3">
                       {history.map((p, i) => (
@@ -343,7 +364,9 @@ function HelpPage() {
                 {receipt && <ProgressView receipt={receipt} progress={progress} busy={looking} onPick={pick} />}
                 {receipts.length > 1 && (
                   <div className={cx(receipt && 'border-t border-separator pt-5')}>
-                    <p className="text-xs text-muted">本机保存的查询凭证（最近 10 张，仅保存在当前浏览器）</p>
+                    <Typography.Paragraph size="xs" color="muted">
+                      本机保存的查询凭证（最近 10 张，仅保存在当前浏览器）
+                    </Typography.Paragraph>
                     <ItemCardGroup variant="outline" className="mt-2">
                       {receipts.map((r, i) => (
                         <Fragment key={r.receipt}>
@@ -378,9 +401,9 @@ function HelpPage() {
             </Panel>
           </section>
         </div>
-        <p className="mt-10 text-center text-xs text-muted">
+        <Typography.Paragraph size="xs" color="muted" align="center" className="mt-10">
           到账以真实支付流水为准。涉及退款及业务站余额的问题，由商户核实处理。
-        </p>
+        </Typography.Paragraph>
       </main>
     </div>
   )
@@ -395,37 +418,43 @@ const resultIcon: Record<string, { icon: ReactNode; className: string }> = {
 function LookupResult({ lookup, state, onClaim }: { lookup: Lookup; state: string; onClaim: () => void }) {
   const look = resultIcon[state] ?? { icon: <CircleMinus />, className: 'bg-default text-muted' }
   return (
-    <div role="status" className="mt-4 rounded-2xl border border-separator p-4">
-      <div className="flex items-start gap-3">
+    <Card
+      role="status"
+      variant="transparent"
+      className={cx('mt-4 gap-4 rounded-2xl border border-solid border-separator', enter)}
+    >
+      <Card.Header className="flex-row items-start gap-3">
         <span className={cx('grid size-10 shrink-0 place-items-center rounded-full [&>svg]:size-5', look.className)}>
           {look.icon}
         </span>
         <div className="min-w-0 flex-1">
-          <p className="font-semibold">{states[state] || state}</p>
-          <p className="mt-0.5 text-xs text-muted">
+          <Card.Title className="text-base font-semibold">{states[state] || state}</Card.Title>
+          <Card.Description className="mt-0.5 text-xs">
             订单 <span className="tb-mono">{lookup.trade_no}</span>
-          </p>
+          </Card.Description>
         </div>
-      </div>
-      <dl className="mt-4 grid grid-cols-2 gap-3 rounded-xl bg-surface-secondary px-4 py-3 text-sm">
-        <div>
-          <dt className="text-xs text-muted">应付金额</dt>
-          <dd className="tb-num mt-0.5 font-medium">¥{lookup.pay_amount}</dd>
-        </div>
-        <div>
-          <dt className="text-xs text-muted">到账时间</dt>
-          <dd className="tb-num mt-0.5 font-medium">{lookup.paid_at > 0 ? time(lookup.paid_at, false) : '—'}</dd>
-        </div>
-      </dl>
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-        <a href={`/cashier/${lookup.trade_no}`} className={cx(linkClass, 'text-sm')}>
+      </Card.Header>
+      <Surface variant="secondary" className="rounded-xl px-4 py-3">
+        <dl className="grid grid-cols-2 gap-3 text-sm">
+          <div>
+            <dt className="text-xs text-muted">应付金额</dt>
+            <dd className="tb-num mt-0.5 font-medium">¥{lookup.pay_amount}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-muted">到账时间</dt>
+            <dd className="tb-num mt-0.5 font-medium">{lookup.paid_at > 0 ? time(lookup.paid_at, false) : '—'}</dd>
+          </div>
+        </dl>
+      </Surface>
+      <Card.Footer className="flex-wrap justify-between gap-3">
+        <Link href={`/cashier/${lookup.trade_no}`} className="text-sm">
           查看收银台
-        </a>
+        </Link>
         <Button size="sm" variant="secondary" onPress={onClaim}>
           这笔付款有问题
         </Button>
-      </div>
-    </div>
+      </Card.Footer>
+    </Card>
   )
 }
 
@@ -515,7 +544,7 @@ function ClaimForm({
           onChange={(x) => set('payment_ref', x)}
           validate={checkRef}
         />
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <TextInput
             label="实际付款金额（元）"
             isRequired
@@ -550,12 +579,12 @@ function ClaimForm({
           value={v.contact}
           onChange={(x) => set('contact', x)}
         />
-        <p className="text-xs leading-relaxed text-muted">
+        <Typography.Paragraph size="xs" color="muted" className="leading-relaxed">
           付款说明及必要的金额、时间可能由本站配置的 AI 辅助核查。联系方式仅用于人工处理。
-        </p>
+        </Typography.Paragraph>
         {error && <Notice status="danger">{error}</Notice>}
         <div>
-          <Button type="submit" isPending={busy}>
+          <Button type="submit" className="max-sm:w-full" isPending={busy}>
             提交并获取查询凭证
           </Button>
         </div>
@@ -580,13 +609,17 @@ function ProgressView({
   const known = s in statusNames
   return (
     <div className="flex flex-col gap-4">
-      <div className="rounded-xl bg-surface-secondary px-3 py-2.5">
-        <p className="text-xs text-muted">查询凭证</p>
+      <Surface variant="secondary" className="rounded-xl px-3 py-2.5">
+        <Typography.Paragraph size="xs" color="muted">
+          查询凭证
+        </Typography.Paragraph>
         <div className="mt-1 text-sm">
           <Copyable text={receipt} mono />
         </div>
-        <p className="mt-1.5 text-xs text-muted">请保存这个查询凭证，换设备后可用它查询。请勿分享给他人。</p>
-      </div>
+        <Typography.Paragraph size="xs" color="muted" className="mt-1.5">
+          请保存这个查询凭证，换设备后可用它查询。请勿分享给他人。
+        </Typography.Paragraph>
+      </Surface>
       {progress.isPending && (
         <div role="status" className="flex items-center gap-2 text-sm text-muted">
           <Spinner size="sm" />

@@ -13,12 +13,16 @@ import {
   Dropdown,
   Form,
   Input,
+  ItemCard,
   Label,
   ListBox,
+  PressableFeedback,
   ProgressBar,
   Skeleton,
+  Surface,
   Switch,
   toast,
+  Typography,
 } from '@yreidev/ui'
 import {
   ChevronDown,
@@ -33,7 +37,7 @@ import {
   QrCode,
   TrashBin,
 } from '@gravity-ui/icons'
-import { api, channelsQuery, meQuery } from '../../lib/api'
+import { ApiError, api, channelsQuery, meQuery } from '../../lib/api'
 import { relative, time } from '../../lib/format'
 import { useNow } from '../../lib/now'
 import { channelHealth } from '../../lib/health'
@@ -44,6 +48,7 @@ import {
   Code,
   Confirm,
   ConfirmDialog,
+  ConflictNotice,
   Copyable,
   Events,
   Notice,
@@ -56,8 +61,10 @@ import {
   TextAreaInput,
   TextInput,
   cx,
+  enter,
   toastError,
   toastOK,
+  useRevision,
   type StepStatus,
   type Tone,
 } from '../../lib/ui'
@@ -116,13 +123,19 @@ function ChannelsPage() {
   const [removing, setRemoving] = useState<ChannelView | null>(null)
   const refresh = () => qc.invalidateQueries({ queryKey: ['channels'] })
   const toggle = useMutation({
+    // 带上列表里的修改时间：列表没刷新到别处的修改时不会把它改回去。
     mutationFn: ({ c, enabled }: { c: ChannelView; enabled: boolean }) =>
-      api.put(`/web-api/admin/channels/${c.id}`, inputOf(c, enabled)),
+      api.put(`/web-api/admin/channels/${c.id}`, inputOf(c, enabled), { revision: c.updated_at }),
     onSuccess: (_d, v) => {
       toastOK(v.enabled ? '已启用' : '已停用')
       void refresh()
     },
-    onError: toastError,
+    onError: (e) => {
+      if (e instanceof ApiError && e.status === 409) {
+        toastError(new Error('这个渠道刚在别处改过，已刷新，请看一下再点'))
+        void refresh()
+      } else toastError(e)
+    },
   })
   const test = useMutation({
     mutationFn: (c: ChannelView) => api.post<TestResult>(`/web-api/admin/channels/${c.id}/test`),
@@ -180,7 +193,9 @@ function ChannelsPage() {
           void refresh()
         }}
       >
-        <p>配置和密钥一起删除，不能恢复。</p>
+        <Typography.Paragraph size="sm" color="muted">
+          配置和密钥一起删除，不能恢复。
+        </Typography.Paragraph>
       </ConfirmDialog>
     </div>
   )
@@ -223,23 +238,34 @@ function Onboarding({ types, onPick }: { types: ChannelType[]; onPick: (t: Chann
         <CreditCard className="size-6" />
       </span>
       <div>
-        <h2 className="text-lg font-semibold">先添加一个收款渠道</h2>
-        <p className="mt-1 text-sm text-muted">商户下单要有可用的渠道才能收款。选一种开始：</p>
+        <Typography.Heading level={2} align="center" className="text-lg">
+          先添加一个收款渠道
+        </Typography.Heading>
+        <Typography.Paragraph size="sm" color="muted" align="center" className="mt-1">
+          商户下单要有可用的渠道才能收款。选一种开始：
+        </Typography.Paragraph>
       </div>
       <div className={cx('grid w-full max-w-3xl gap-3', types.length > 2 ? 'sm:grid-cols-3' : 'sm:grid-cols-2')}>
         {types.map((t) => {
           const M = typeMeta[t]
           return (
-            <button
+            <ItemCard<'button'>
               key={t}
+              variant="outline"
               type="button"
               onClick={() => onPick(t)}
-              className="flex flex-col items-start gap-2 rounded-2xl border border-separator p-4 text-left outline-none hover:bg-default focus-visible:ring-2 focus-visible:ring-focus"
+              className="relative cursor-pointer flex-col items-start gap-3 overflow-hidden rounded-2xl p-4 text-left outline-none focus-visible:ring-2 focus-visible:ring-focus"
+              render={(props) => <button {...props} />}
             >
-              <M.icon className="size-5 text-accent" />
-              <span className="font-medium">{channelTypeText[t]}</span>
-              <span className="text-sm text-muted">{M.blurb}</span>
-            </button>
+              <PressableFeedback.Highlight />
+              <ItemCard.Icon className="bg-accent-soft text-accent-soft-foreground">
+                <M.icon />
+              </ItemCard.Icon>
+              <ItemCard.Content className="gap-1">
+                <ItemCard.Title className="text-base">{channelTypeText[t]}</ItemCard.Title>
+                <ItemCard.Description className="mt-0 text-sm whitespace-normal">{M.blurb}</ItemCard.Description>
+              </ItemCard.Content>
+            </ItemCard>
           )
         })}
       </div>
@@ -282,12 +308,12 @@ function ChannelCard({
           <M.icon />
         </span>
         <div className="min-w-0 flex-1">
-          <h2 className="truncate font-semibold" title={c.name}>
+          <Typography.Heading level={2} truncate className="text-base" title={c.name}>
             {c.name}
-          </h2>
-          <p className="text-xs text-muted">
+          </Typography.Heading>
+          <Typography.Paragraph size="xs" color="muted">
             {channelTypeText[c.type] ?? c.type} · 编号 {c.id}
-          </p>
+          </Typography.Paragraph>
         </div>
         <Switch
           size="sm"
@@ -307,7 +333,11 @@ function ChannelCard({
         <StatusDot tone={state.tone}>
           <span className="font-medium">{state.text}</span>
         </StatusDot>
-        {c.enabled && c.problem && <p className="text-xs text-danger">{c.problem}</p>}
+        {c.enabled && c.problem && (
+          <Typography.Paragraph size="xs" className="text-danger">
+            {c.problem}
+          </Typography.Paragraph>
+        )}
         <Health c={c} />
       </div>
       {!!c.pay_types?.length && (
@@ -326,7 +356,11 @@ function ChannelCard({
           <LearnedLimits c={c} />
         </div>
       )}
-      <dl className="grid grid-cols-3 rounded-xl bg-default/60 py-2.5 text-center">
+      <Surface<'dl'>
+        variant="secondary"
+        className="grid grid-cols-3 rounded-xl py-2.5 text-center"
+        render={(props) => <dl {...props} />}
+      >
         {(
           [
             ['商户', c.merchants],
@@ -339,8 +373,12 @@ function ChannelCard({
             <dd className="tb-num text-sm font-medium">{n}</dd>
           </div>
         ))}
-      </dl>
-      {c.remark && <p className="line-clamp-2 text-xs text-muted">{c.remark}</p>}
+      </Surface>
+      {c.remark && (
+        <Typography.Paragraph size="xs" color="muted" className="line-clamp-2">
+          {c.remark}
+        </Typography.Paragraph>
+      )}
       <div className="mt-auto flex items-center gap-2">
         <Button size="sm" variant="secondary" onPress={onEdit}>
           <Pencil />
@@ -404,7 +442,11 @@ function LearnedLimits({ c }: { c: ChannelView }) {
     ...(l.max_at ? [`${payTypeLabel(t)}最高 ${l.max} 元（${relative(l.max_at, now)}）`] : []),
   ])
   if (!items.length) return null
-  return <p className="text-xs text-muted">上游拒单时自动识别：{items.join('，')}</p>
+  return (
+    <Typography.Paragraph size="xs" color="muted">
+      上游拒单时自动识别：{items.join('，')}
+    </Typography.Paragraph>
+  )
 }
 
 // Health 是渠道的运行情况：经营码看查账，上游看预下单、查单和回调。
@@ -413,15 +455,13 @@ function Health({ c }: { c: ChannelView }) {
   return (
     <>
       {lines.map((l, i) => (
-        <p
+        <Typography.Paragraph
           key={i}
-          className={cx(
-            'text-xs',
-            l.tone === 'danger' ? 'text-danger' : l.tone === 'warning' ? 'text-warning' : 'text-muted',
-          )}
+          size="xs"
+          className={l.tone === 'danger' ? 'text-danger' : l.tone === 'warning' ? 'text-warning' : 'text-muted'}
         >
           {l.text}
-        </p>
+        </Typography.Paragraph>
       ))}
     </>
   )
@@ -447,10 +487,10 @@ function Editor({
         <Drawer.Dialog className="w-[min(640px,100vw)] max-w-[100vw] p-0 sm:w-[min(640px,100vw)]">
           <Drawer.CloseTrigger />
           <Drawer.Header className="gap-0.5 border-b border-separator px-5 pt-5 pb-4 sm:px-6">
-            <p className="text-sm text-muted">
+            <Typography.Paragraph size="sm" color="muted">
               {c ? '编辑渠道' : '新建渠道'}
               {type && ` · ${channelTypeText[type]}`}
-            </p>
+            </Typography.Paragraph>
             <Drawer.Heading className="truncate pr-10 text-lg font-semibold">
               {c?.name ?? `新的${type ? channelTypeText[type] : ''}渠道`}
             </Drawer.Heading>
@@ -465,15 +505,28 @@ function Editor({
 }
 
 // useSave 保存渠道。新建成功后切到编辑这个渠道（之后才能生成密钥对、测试连接）。
-function useSave(c: ChannelView | undefined, type: ChannelType, onCreated: (id: number) => void) {
+// 修改时带上渠道的修改时间，在别处改过就提示冲突（见 useRevision）；reload 把表单换成最新的渠道。
+function useSave(
+  c: ChannelView | undefined,
+  type: ChannelType,
+  onCreated: (id: number) => void,
+  form: { clean: boolean; reset: (c?: ChannelView) => void },
+) {
   const qc = useQueryClient()
   const [busy, setBusy] = useState(false)
-  const save = async (base: Base, config: Record<string, unknown>) => {
+  const rev = useRevision(c?.updated_at ?? 0, form.clean)
+  const save = async (base: Base, config: Record<string, unknown>, overwrite = false) => {
     setBusy(true)
     try {
       const body = { type, name: base.name, remark: base.remark, enabled: base.enabled, config }
       if (c) {
-        await api.put(`/web-api/admin/channels/${c.id}`, body)
+        const saved = await rev.run(
+          async (revision) =>
+            (await api.put<{ channel: { updated_at: number } }>(`/web-api/admin/channels/${c.id}`, body, { revision }))
+              .channel.updated_at,
+          overwrite,
+        )
+        if (!saved) return false
         await qc.invalidateQueries({ queryKey: ['channels'] })
         toastOK('已保存')
       } else {
@@ -490,7 +543,9 @@ function useSave(c: ChannelView | undefined, type: ChannelType, onCreated: (id: 
       setBusy(false)
     }
   }
-  return { save, busy }
+  const reload = async () =>
+    form.reset((await qc.fetchQuery({ ...channelsQuery, staleTime: 0 })).items.find((x) => x.id === c?.id))
+  return { save, busy, rev, reload }
 }
 
 // useConnTest 测试渠道连接，结果留在接入清单里显示。
@@ -506,11 +561,14 @@ function useConnTest(c?: ChannelView) {
 
 type SetBase = <K extends keyof Base>(k: K, v: Base[K]) => void
 
-function useFormState<T extends Base>(init: () => T) {
-  const [v, setV] = useState<T>(init)
+// useFormState 管表单的值。init 按渠道算出表单内容，每次渲染都按最新的渠道再算一次：
+// 和表单一样就是没改过（clean），给 useRevision 用；reset 把表单换成某个渠道的内容（载入最新时用）。
+function useFormState<T extends Base>(c: ChannelView | undefined, init: (c?: ChannelView) => T) {
+  const [v, setV] = useState<T>(() => init(c))
   const set = <K extends keyof T>(k: K, x: T[K]) => setV((s) => ({ ...s, [k]: x }))
   const setBase: SetBase = (k, x) => setV((s) => ({ ...s, [k]: x }))
-  return [v, set, setBase] as const
+  const form = { clean: JSON.stringify(v) === JSON.stringify(init(c)), reset: (next?: ChannelView) => setV(init(next)) }
+  return [v, set, setBase, form] as const
 }
 
 interface Step {
@@ -527,7 +585,11 @@ function Checklist({ steps }: { steps: Step[] }) {
   const status = (s: Step, i: number): StepStatus =>
     s.done ? 'done' : s.error ? 'error' : i === current ? 'current' : 'wait'
   return (
-    <section className="flex flex-col gap-4 rounded-2xl border border-separator p-4">
+    <Card<'section'>
+      variant="transparent"
+      className="gap-4 rounded-2xl border border-solid border-separator"
+      render={(props) => <section {...props} />}
+    >
       <ProgressBar
         size="sm"
         color="success"
@@ -555,7 +617,7 @@ function Checklist({ steps }: { steps: Step[] }) {
           }
         })}
       />
-    </section>
+    </Card>
   )
 }
 
@@ -597,14 +659,22 @@ function FormFooter({
   formId,
   busy,
   test,
+  conflict,
 }: {
   c?: ChannelView
   formId: string
   busy: boolean
   test?: ReturnType<typeof useConnTest>
+  /** 保存冲突时的两个操作，没有冲突时不传 */
+  conflict?: false | { onReload: () => Promise<unknown>; onOverwrite: () => Promise<unknown> }
 }) {
   return (
     <Drawer.Footer className="flex-wrap justify-start gap-2 border-t border-separator px-5 py-4 sm:px-6">
+      {conflict && (
+        <div className="w-full">
+          <ConflictNotice what="这个渠道" onReload={conflict.onReload} onOverwrite={conflict.onOverwrite} />
+        </div>
+      )}
       <Button type="submit" form={formId} isPending={busy}>
         {c ? '保存' : '创建渠道'}
       </Button>
@@ -685,6 +755,7 @@ function KeyField({
   has,
   upload,
   warn,
+  onMoved,
 }: {
   c?: ChannelView
   label: string
@@ -692,11 +763,14 @@ function KeyField({
   has: boolean
   upload: string
   warn: string
+  /** 生成密钥对改了渠道的修改时间，告诉表单从哪个改成了哪个（见 useRevision 的 moved） */
+  onMoved: (from: number, to: number) => void
 }) {
   const qc = useQueryClient()
   const gen = useMutation({
-    mutationFn: () => api.post<{ public_key: string }>(`/web-api/admin/channels/${c!.id}/keypair`),
-    onSuccess: () => {
+    mutationFn: () => api.post<{ public_key: string; updated_at: number }>(`/web-api/admin/channels/${c!.id}/keypair`),
+    onSuccess: (r) => {
+      onMoved(c!.updated_at, r.updated_at)
       toastOK(`已生成新的密钥对，请把公钥${upload}`)
       void qc.invalidateQueries({ queryKey: ['channels'] })
     },
@@ -706,14 +780,16 @@ function KeyField({
     <div className="flex flex-col gap-2">
       <span className="text-sm font-medium">{label}</span>
       {pub ? (
-        <div className="flex flex-col gap-1 rounded-xl bg-default/60 px-3 py-2.5">
+        <Surface variant="secondary" className="flex flex-col gap-1 rounded-xl px-3 py-2.5">
           <span className="text-xs text-muted">公钥，{upload}</span>
           <Copyable text={pub} mono>
             {pub.slice(0, 32)}…{pub.slice(-12)}
           </Copyable>
-        </div>
+        </Surface>
       ) : (
-        <p className="text-sm text-muted">{c ? '还没有密钥对。' : '先创建渠道，再在这里生成密钥对。'}</p>
+        <Typography.Paragraph size="sm" color="muted">
+          {c ? '还没有密钥对。' : '先创建渠道，再在这里生成密钥对。'}
+        </Typography.Paragraph>
       )}
       {c && (
         <div>
@@ -750,29 +826,36 @@ interface AlipayValues extends Base {
 function AlipayForm({ c, onCreated }: { c?: ChannelView; onCreated: (id: number) => void }) {
   const a = (c?.config ?? {}) as Partial<AlipayQRConfig>
   const formId = useId()
-  const { save, busy } = useSave(c, 'alipay_qr', onCreated)
   const test = useConnTest(c)
   const fileRef = useRef<HTMLInputElement>(null)
   const [decoding, setDecoding] = useState(false)
-  const [v, set, setBase] = useFormState<AlipayValues>(() => ({
-    name: c?.name ?? '支付宝经营码',
-    remark: c?.remark ?? '',
-    enabled: c?.enabled ?? false,
-    app_id: a.app_id ?? '',
-    alipay_public_key: a.alipay_public_key ?? '',
-    gateway: a.gateway || 'https://openapi.alipay.com',
-    qrcode_url: a.qrcode_url ?? '',
-    payee_name: a.payee_name ?? '',
-  }))
-  const submit = async (privateKey = '') => {
-    const ok = await save(v, {
-      app_id: v.app_id,
-      alipay_public_key: v.alipay_public_key,
-      gateway: v.gateway,
-      qrcode_url: v.qrcode_url,
-      payee_name: v.payee_name,
-      app_private_key: privateKey,
-    })
+  const [v, set, setBase, form] = useFormState<AlipayValues>(c, (c) => {
+    const a = (c?.config ?? {}) as Partial<AlipayQRConfig>
+    return {
+      name: c?.name ?? '支付宝经营码',
+      remark: c?.remark ?? '',
+      enabled: c?.enabled ?? false,
+      app_id: a.app_id ?? '',
+      alipay_public_key: a.alipay_public_key ?? '',
+      gateway: a.gateway || 'https://openapi.alipay.com',
+      qrcode_url: a.qrcode_url ?? '',
+      payee_name: a.payee_name ?? '',
+    }
+  })
+  const { save, busy, rev, reload } = useSave(c, 'alipay_qr', onCreated, form)
+  const submit = async (privateKey = '', overwrite = false) => {
+    const ok = await save(
+      v,
+      {
+        app_id: v.app_id,
+        alipay_public_key: v.alipay_public_key,
+        gateway: v.gateway,
+        qrcode_url: v.qrcode_url,
+        payee_name: v.payee_name,
+        app_private_key: privateKey,
+      },
+      overwrite,
+    )
     if (ok) test.clear()
     return ok
   }
@@ -888,6 +971,7 @@ function AlipayForm({ c, onCreated }: { c?: ChannelView; onCreated: (id: number)
               has={!!a.has_private_key}
               upload="上传到支付宝开放平台"
               warn="旧密钥立即作废，要把新的应用公钥重新上传到支付宝开放平台，否则查账会失败。"
+              onMoved={rev.moved}
             />
             <ImportKey
               title="已经有应用私钥？导入"
@@ -939,7 +1023,13 @@ function AlipayForm({ c, onCreated }: { c?: ChannelView; onCreated: (id: number)
           <EnableField c={c} v={v} set={setBase} />
         </Form>
       </Drawer.Body>
-      <FormFooter c={c} formId={formId} busy={busy} test={test} />
+      <FormFooter
+        c={c}
+        formId={formId}
+        busy={busy}
+        test={test}
+        conflict={rev.conflict && { onReload: reload, onOverwrite: () => submit('', true) }}
+      />
     </>
   )
 }
@@ -962,34 +1052,41 @@ const checkYuan = (x: string) =>
 function UpstreamForm({ c, onCreated }: { c?: ChannelView; onCreated: (id: number) => void }) {
   const u = (c?.config ?? {}) as Partial<UpstreamConfig>
   const formId = useId()
-  const { save, busy } = useSave(c, 'epay', onCreated)
   const test = useConnTest(c)
   const apiURL = useQuery(meQuery).data?.api_url ?? '/'
-  const [v, set, setBase] = useFormState<UpstreamValues>(() => ({
-    name: c?.name ?? '',
-    remark: c?.remark ?? '',
-    enabled: c?.enabled ?? false,
-    api_url: u.api_url ?? '',
-    version: u.version ?? 1,
-    pid: u.pid ?? '',
-    key: '',
-    platform_public_key: u.platform_public_key ?? '',
-    types: u.types ?? ['alipay'],
-    limits: Object.fromEntries(Object.entries(u.limits ?? {}).map(([t, l]) => [t, { min: l.min, max: l.max }])),
-  }))
+  const [v, set, setBase, form] = useFormState<UpstreamValues>(c, (c) => {
+    const u = (c?.config ?? {}) as Partial<UpstreamConfig>
+    return {
+      name: c?.name ?? '',
+      remark: c?.remark ?? '',
+      enabled: c?.enabled ?? false,
+      api_url: u.api_url ?? '',
+      version: u.version ?? 1,
+      pid: u.pid ?? '',
+      key: '',
+      platform_public_key: u.platform_public_key ?? '',
+      types: u.types ?? ['alipay'],
+      limits: Object.fromEntries(Object.entries(u.limits ?? {}).map(([t, l]) => [t, { min: l.min, max: l.max }])),
+    }
+  })
+  const { save, busy, rev, reload } = useSave(c, 'epay', onCreated, form)
   const setLimit = (t: string, side: 'min' | 'max', x: string) =>
     set('limits', { ...v.limits, [t]: { ...(v.limits[t] ?? noLimit), [side]: x } })
-  const submit = async (privateKey = '') => {
-    const ok = await save(v, {
-      api_url: v.api_url,
-      version: v.version,
-      pid: v.pid,
-      key: v.key,
-      private_key: privateKey,
-      platform_public_key: v.platform_public_key,
-      types: v.types,
-      limits: Object.fromEntries(v.types.map((t) => [t, v.limits[t] ?? noLimit])),
-    })
+  const submit = async (privateKey = '', overwrite = false) => {
+    const ok = await save(
+      v,
+      {
+        api_url: v.api_url,
+        version: v.version,
+        pid: v.pid,
+        key: v.key,
+        private_key: privateKey,
+        platform_public_key: v.platform_public_key,
+        types: v.types,
+        limits: Object.fromEntries(v.types.map((t) => [t, v.limits[t] ?? noLimit])),
+      },
+      overwrite,
+    )
     if (ok) {
       set('key', '')
       test.clear()
@@ -1078,6 +1175,7 @@ function UpstreamForm({ c, onCreated }: { c?: ChannelView; onCreated: (id: numbe
                   has={!!u.has_private_key}
                   upload="填到上游商户后台的「商户公钥」"
                   warn="旧私钥立即作废，要把新的商户公钥重新填到上游商户后台，否则预下单和查单会失败。"
+                  onMoved={rev.moved}
                 />
                 <ImportKey
                   title="上游已经给了商户私钥？导入"
@@ -1131,18 +1229,18 @@ function UpstreamForm({ c, onCreated }: { c?: ChannelView; onCreated: (id: numbe
               </Description>
             </CheckboxGroup>
             {c && (
-              <p className="text-xs text-muted">
+              <Typography.Paragraph size="xs" color="muted">
                 下单时会把回调地址 <Code>{`${apiURL}web-api/channels/${c.id}/notify`}</Code>{' '}
                 带给上游，上游后台不用另外配置；上游要能访问到这个地址。
-              </p>
+              </Typography.Paragraph>
             )}
           </Section>
           {v.types.length > 0 && (
-            <Section title="单笔限额">
-              <p className="text-xs text-muted">
+            <Section title="单笔限额" className={enter}>
+              <Typography.Paragraph size="xs" color="muted">
                 留空表示不限。上游以金额为由拒单时（例如“最小支付金额是0.3元”）会自动填上，24
                 小时内金额不在范围里的订单直接请付款人换一种方式；手动填的一直有效。
-              </p>
+              </Typography.Paragraph>
               {v.types.map((t) => {
                 const l = v.limits[t] ?? noLimit
                 const saved = u.limits?.[t]
@@ -1152,7 +1250,7 @@ function UpstreamForm({ c, onCreated }: { c?: ChannelView; onCreated: (id: numbe
                 ].filter(Boolean)
                 return (
                   <div key={t} className="flex flex-col gap-2">
-                    <p className="text-sm">{payTypeLabel(t)}</p>
+                    <Typography.Paragraph size="sm">{payTypeLabel(t)}</Typography.Paragraph>
                     <div className="grid gap-3 sm:grid-cols-2">
                       <TextInput
                         label="最低金额（元）"
@@ -1171,7 +1269,11 @@ function UpstreamForm({ c, onCreated }: { c?: ChannelView; onCreated: (id: numbe
                         validate={checkYuan}
                       />
                     </div>
-                    {learned.length > 0 && <p className="text-xs text-muted">{learned.join('，')}</p>}
+                    {learned.length > 0 && (
+                      <Typography.Paragraph size="xs" color="muted">
+                        {learned.join('，')}
+                      </Typography.Paragraph>
+                    )}
                   </div>
                 )
               })}
@@ -1180,19 +1282,25 @@ function UpstreamForm({ c, onCreated }: { c?: ChannelView; onCreated: (id: numbe
           <EnableField c={c} v={v} set={setBase} />
         </Form>
       </Drawer.Body>
-      <FormFooter c={c} formId={formId} busy={busy} test={test} />
+      <FormFooter
+        c={c}
+        formId={formId}
+        busy={busy}
+        test={test}
+        conflict={rev.conflict && { onReload: reload, onOverwrite: () => submit('', true) }}
+      />
     </>
   )
 }
 
 function DemoForm({ c, onCreated }: { c?: ChannelView; onCreated: (id: number) => void }) {
   const formId = useId()
-  const { save, busy } = useSave(c, 'demo', onCreated)
-  const [v, , setBase] = useFormState<Base>(() => ({
+  const [v, , setBase, form] = useFormState<Base>(c, (c) => ({
     name: c?.name ?? '演示渠道',
     remark: c?.remark ?? '',
     enabled: c?.enabled ?? true,
   }))
+  const { save, busy, rev, reload } = useSave(c, 'demo', onCreated, form)
   return (
     <>
       <Drawer.Body className="px-5 py-5 sm:px-6">
@@ -1212,7 +1320,12 @@ function DemoForm({ c, onCreated }: { c?: ChannelView; onCreated: (id: number) =
           <EnableField c={c} v={v} set={setBase} />
         </Form>
       </Drawer.Body>
-      <FormFooter c={c} formId={formId} busy={busy} />
+      <FormFooter
+        c={c}
+        formId={formId}
+        busy={busy}
+        conflict={rev.conflict && { onReload: reload, onOverwrite: () => save(v, {}, true) }}
+      />
     </>
   )
 }

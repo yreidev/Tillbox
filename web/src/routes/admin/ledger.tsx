@@ -1,7 +1,7 @@
 import { Fragment, useState } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, ItemCard, ItemCardGroup, Separator } from '@yreidev/ui'
+import { Button, ItemCard, ItemCardGroup, Separator, Surface, Typography } from '@yreidev/ui'
 import { CircleCheck, Link as LinkIcon } from '@gravity-ui/icons'
 import { LedgerRow } from '../../components/ledger-status'
 import { OrderDetail } from '../../components/order-detail'
@@ -144,7 +144,7 @@ function LinkModal({ txn, onClose }: { txn: Transaction | null; onClose: () => v
 // TxnBox 是弹窗里一笔流水的摘要。
 function TxnBox({ txn }: { txn: Transaction }) {
   return (
-    <div className="flex items-center justify-between gap-4 rounded-xl bg-default/60 px-4 py-3">
+    <Surface variant="secondary" className="flex items-center justify-between gap-4 rounded-xl px-4 py-3">
       <div className="min-w-0 text-sm">
         <div className="truncate">{txn.other_account || '付款方未知'}</div>
         <div className="tb-num text-xs text-muted">{time(txn.occurred_at)}</div>
@@ -153,7 +153,7 @@ function TxnBox({ txn }: { txn: Transaction }) {
         </div>
       </div>
       <span className="tb-num shrink-0 text-xl font-semibold">¥{yuan(txn.amount)}</span>
-    </div>
+    </Surface>
   )
 }
 
@@ -226,18 +226,20 @@ function Anomalies({ search, resolved }: { search: Search; resolved: boolean }) 
                         </span>
                       )}
                     </div>
-                    <p className="text-sm">{a.detail}</p>
+                    <Typography.Paragraph size="sm">{a.detail}</Typography.Paragraph>
                     {t && (
-                      <p className="text-xs text-muted">
+                      <Typography.Paragraph size="xs" color="muted">
                         <span className="tb-num font-medium text-foreground">¥{yuan(t.amount)}</span> ·{' '}
                         {t.other_account || '付款方未知'} · <span className="tb-num">{time(t.occurred_at)}</span> · 流水{' '}
                         <Mono>{t.external_id}</Mono>
-                      </p>
+                      </Typography.Paragraph>
                     )}
                     {resolved && (
-                      <p className="mt-0.5 rounded-lg bg-default/60 px-3 py-2 text-xs text-muted">
-                        {a.resolved_by} 于 <span className="tb-num">{time(a.resolved_at)}</span> 处理：{a.note}
-                      </p>
+                      <Surface variant="secondary" className="mt-0.5 rounded-lg px-3 py-2">
+                        <Typography.Paragraph size="xs" color="muted">
+                          {a.resolved_by} 于 <span className="tb-num">{time(a.resolved_at)}</span> 处理：{a.note}
+                        </Typography.Paragraph>
+                      </Surface>
                     )}
                   </ItemCard.Content>
                   {!resolved && (

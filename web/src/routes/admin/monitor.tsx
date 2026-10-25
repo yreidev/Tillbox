@@ -1,5 +1,5 @@
 import { Fragment, useMemo, useState } from 'react'
-import { Link, createFileRoute } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   BarChart,
@@ -11,7 +11,7 @@ import {
   ListView,
   Segment,
   Separator,
-  linkVariants,
+  Typography,
   type ChartTooltipPayloadItem,
 } from '@yreidev/ui'
 import { ArrowsRotateRight, ChevronRight, CircleExclamation, TriangleExclamation } from '@gravity-ui/icons'
@@ -29,9 +29,9 @@ import {
   PageSkeleton,
   Panel,
   Pill,
+  RouterLink,
   Stack,
   StatusDot,
-  cx,
   toastError,
   toastOK,
 } from '../../lib/ui'
@@ -218,13 +218,9 @@ function ChannelsPanel({ channels, now }: { channels: ChannelHealth[]; now: numb
   return (
     <Panel title="渠道运行情况" description="能否收款，经营码看查账，上游渠道看预下单、查单和回调">
       {channels.length === 0 ? (
-        <p className="text-sm text-muted">
-          还没有支付渠道，到{' '}
-          <Link className={linkVariants().base()} to="/admin/channels">
-            支付渠道
-          </Link>{' '}
-          页新建。
-        </p>
+        <Typography.Paragraph size="sm" color="muted">
+          还没有支付渠道，到 <RouterLink to="/admin/channels">支付渠道</RouterLink> 页新建。
+        </Typography.Paragraph>
       ) : (
         <ItemCardGroup variant="transparent">
           {channels.map((c, i) => (
@@ -236,17 +232,21 @@ function ChannelsPanel({ channels, now }: { channels: ChannelHealth[]; now: numb
                   <ItemCard.Description className="mt-0">
                     {channelTypeText[c.type] ?? c.type} · 渠道 {c.id}
                   </ItemCard.Description>
-                  {c.enabled && c.problem && <p className="text-xs text-danger">{c.problem}</p>}
+                  {c.enabled && c.problem && (
+                    <Typography.Paragraph size="xs" className="text-danger">
+                      {c.problem}
+                    </Typography.Paragraph>
+                  )}
                   {channelHealth(c, now).map((l, i) => (
-                    <p
+                    <Typography.Paragraph
                       key={i}
-                      className={cx(
-                        'text-xs',
-                        l.tone === 'danger' ? 'text-danger' : l.tone === 'warning' ? 'text-warning' : 'text-muted',
-                      )}
+                      size="xs"
+                      className={
+                        l.tone === 'danger' ? 'text-danger' : l.tone === 'warning' ? 'text-warning' : 'text-muted'
+                      }
                     >
                       {l.text}
-                    </p>
+                    </Typography.Paragraph>
                   ))}
                 </ItemCard.Content>
                 <ItemCard.Action>
@@ -270,21 +270,17 @@ function NotifyPanel({ tg, state, now }: { tg: TelegramView; state: MonitorState
       title="Telegram 通知"
       description="告警开始、笔数变多、恢复，以及一直没恢复时，发给绑定的人"
       extra={
-        <Link
-          to="/admin/settings"
-          search={{ tab: 'notify' }}
-          className={cx(linkVariants().base(), 'inline-flex items-center gap-0.5 text-sm')}
-        >
+        <RouterLink to="/admin/settings" search={{ tab: 'notify' }} className="gap-0.5 text-sm">
           {tg.configured ? '设置' : '去设置'}
           <ChevronRight className="size-3.5" />
-        </Link>
+        </RouterLink>
       }
     >
       {!tg.configured ? (
-        <p className="text-sm text-muted">
+        <Typography.Paragraph size="sm" color="muted">
           还没设置机器人，告警只显示在这个页面。到“设置 → 管理员通知”填上 Telegram
           机器人并绑定自己的账号，有问题时手机上马上能收到；收款到账、付款申诉也可以一起推送。
-        </p>
+        </Typography.Paragraph>
       ) : (
         <Desc
           data={[
@@ -395,7 +391,7 @@ function TrendsPanel() {
     refetchInterval: 60_000,
     placeholderData: keepPreviousData,
   })
-  // 页面每 5 秒刷新相对时间，图表只在数据变了时重画
+  // 页面每 5 秒刷新相对时间，图表只在数据变了时重画；数据没变时 rows 不变，进场动画不重播
   const { buckets, rows } = useMemo(() => {
     const buckets = q.data?.buckets ?? []
     const hourly = q.data?.range === '24h'
@@ -436,8 +432,10 @@ function TrendsPanel() {
       {q.isError && <Notice status="danger">{q.error.message}</Notice>}
       <div className="grid gap-6 lg:grid-cols-2">
         <section className="flex min-w-0 flex-col gap-1">
-          <h3 className="text-sm font-semibold">订单</h3>
-          <p className="text-xs text-muted">
+          <Typography.Heading level={3} className="text-sm">
+            订单
+          </Typography.Heading>
+          <Typography.Paragraph size="xs" color="muted">
             新建 <span className="tb-num">{created}</span> 笔，已支付 <span className="tb-num">{paid}</span> 笔
             {created > 0 && (
               <>
@@ -445,7 +443,7 @@ function TrendsPanel() {
               </>
             )}
             。按下单时间归格，最近一格里可能还有等待付款的订单。
-          </p>
+          </Typography.Paragraph>
           <Legend items={orderLegend} />
           <ComposedChart
             data={rows}
@@ -472,7 +470,6 @@ function TrendsPanel() {
               fillOpacity={0.35}
               maxBarSize={16}
               radius={[3, 3, 0, 0]}
-              isAnimationActive={false}
             />
             <ComposedChart.Bar
               yAxisId="count"
@@ -481,7 +478,6 @@ function TrendsPanel() {
               fill="var(--success)"
               maxBarSize={16}
               radius={[3, 3, 0, 0]}
-              isAnimationActive={false}
             />
             <ComposedChart.Line
               yAxisId="rate"
@@ -491,30 +487,24 @@ function TrendsPanel() {
               stroke="var(--accent)"
               strokeWidth={2}
               dot={{ r: 2.5 }}
-              isAnimationActive={false}
             />
             <ComposedChart.Tooltip cursor={{ fill: 'var(--default)' }} content={<TrendTooltip unit="笔" />} />
           </ComposedChart>
         </section>
         <section className="flex min-w-0 flex-col gap-1">
-          <h3 className="text-sm font-semibold">通知商户</h3>
-          <p className="text-xs text-muted">
+          <Typography.Heading level={3} className="text-sm">
+            通知商户
+          </Typography.Heading>
+          <Typography.Paragraph size="xs" color="muted">
             送达 <span className="tb-num">{ok}</span> 次，失败 <span className="tb-num">{fail}</span>{' '}
             次。按发送时间归格，含自动重发和手动重发。
-          </p>
+          </Typography.Paragraph>
           <Legend items={notifyLegend} />
           <BarChart data={rows} height={256} role="img" aria-label={`通知商户趋势：送达 ${ok} 次，失败 ${fail} 次`}>
             <BarChart.Grid vertical={false} strokeDasharray="3 3" />
             <BarChart.XAxis dataKey="label" minTickGap={8} />
             <BarChart.YAxis allowDecimals={false} tickCount={notifyTicks} width={32} />
-            <BarChart.Bar
-              dataKey="ok"
-              name="送达"
-              stackId="notify"
-              fill="var(--success)"
-              maxBarSize={16}
-              isAnimationActive={false}
-            />
+            <BarChart.Bar dataKey="ok" name="送达" stackId="notify" fill="var(--success)" maxBarSize={16} />
             <BarChart.Bar
               dataKey="fail"
               name="失败"
@@ -522,7 +512,6 @@ function TrendsPanel() {
               fill="var(--danger)"
               maxBarSize={16}
               radius={[3, 3, 0, 0]}
-              isAnimationActive={false}
             />
             <BarChart.Tooltip cursor={{ fill: 'var(--default)' }} content={<TrendTooltip unit="次" />} />
           </BarChart>
@@ -536,8 +525,12 @@ function ResolvedPanel({ alerts }: { alerts: Alert[] }) {
   return (
     <div className="flex flex-col gap-3">
       <div className="mt-2 flex flex-col gap-1">
-        <h2 className="text-base font-semibold">最近恢复的告警</h2>
-        <p className="text-sm text-muted">最近 30 条。恢复的告警保留 180 天。</p>
+        <Typography.Heading level={2} className="text-base">
+          最近恢复的告警
+        </Typography.Heading>
+        <Typography.Paragraph size="sm" color="muted">
+          最近 30 条。恢复的告警保留 180 天。
+        </Typography.Paragraph>
       </div>
       <DataTable
         label="最近恢复的告警"

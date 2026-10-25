@@ -6,6 +6,7 @@
 
 - **组件都用组件库现成的**：组件统一从组件库 `@yreidev/ui` 导入（见 [development.md](development.md#组件库-yreideviu私有包)）。它原样转出开源 HeroUI v3（基于 React Aria），另有外观对齐 HeroUI Pro 的组件：后台外壳（`AppLayout`、`Sidebar`、`Navbar`）、指标卡（`KPI`）、表格（`DataGrid`）、列表（`ListView`、`ItemCard`）、步骤条（`Stepper`）、时间线（`Timeline`）、分段切换（`Segment`）、空状态（`EmptyState`）、图表（`BarChart`、`ComposedChart`，基于 recharts）。这些是组件库自己写的，本仓库不引入也不复制 Pro 的包和源码。库里没有的组件先加进组件库、发新版本再用，不在本仓库里手写一个凑合。样式用 Tailwind CSS v4，图标用 `@gravity-ui/icons`。
 - **HeroUI 默认观感**：默认主题、默认蓝色主色，不覆盖主题变量。颜色只用主题变量对应的工具类（`bg-background`、`bg-surface`、`bg-surface-secondary`、`text-muted`、`border-separator`、`text-accent`、`bg-success-soft` 等），不写死色值。唯一例外是收银台二维码的白色底板，深色模式下也要能扫。
+- **文字、块、链接也用组件**：标题用 `Typography.Heading`，段落用 `Typography.Paragraph`（`size`、`color="muted"`），正文里的代码和地址用 `Code`（基于 `Typography.Code`）。`Typography` 默认左对齐、正文色，放在居中或带颜色的容器里要自己写 `align`、`color` 或颜色类。灰底的信息块用 `Surface variant="secondary"`，带边框的小卡片用 `Card variant="transparent"` 加 `border border-solid`（透明变体自带 `border-none`，只写 `border` 不显示），空数据用 `Empty`（基于 `EmptyState`）。整块可点的卡片用 `ItemCard`，经 `render` 渲染成 `<a>` 或 `<button>`，里面放 `PressableFeedback.Highlight` 做悬停和按下的反馈。站内链接用 `RouterLink`（HeroUI 的 `Link`，写法和路由的 `<Link>` 一样，保留悬停预加载），站外链接和整页跳转用 `Link` 写 `href`。仍然手写的只有版面辅助（`SettingsRow`、`Section`、`Desc` 这类布局）、标志、二维码、“跳到主内容”、Telegram 绑定步骤的有序列表、首页 HTML 预览的 iframe 和 `StatusDot`。
 - **数字对齐**：金额、笔数用 `tb-num`（等宽数字），订单号、流水号、密钥用 `tb-mono`（等宽字体），两个类在 `web/src/styles/theme.css`。
 - **一页一个主操作**：页面右上角或卡片底部只放一个主色按钮，其余用次要样式。
 
@@ -13,11 +14,11 @@
 
 | 文件 | 内容 |
 | --- | --- |
-| `web/src/styles/theme.css` | 样式入口：引入 Tailwind 和 HeroUI 样式，以及对外页面也用到的组件库组件样式（`ItemCard`、`Stepper`、`Timeline`）；定义字体、`tb-num`、`tb-mono`，并给 HeroUI 按钮补上“处理中”的转圈（HeroUI 的 `isPending` 只屏蔽点击，没有视觉变化） |
-| `web/src/styles/admin.css` | 只有后台用的组件库组件样式（外壳、表格、图表、指标卡等），由 `ui.tsx` 引入，随后台代码按需加载 |
-| `web/src/lib/ui-base.tsx` | 基础组件：`Notice` 提示条、`Pill` 标签、`Panel` 卡片、`StatusDot`、`Events`（竖排的步骤或事件记录，基于 `Timeline`）、`Copyable`、`copyText`、提示消息、`cx`、`linkClass` |
+| `web/src/styles/theme.css` | 样式入口：引入 Tailwind 和 HeroUI 样式，以及对外页面也用到的组件库组件样式（`EmptyState`、`ItemCard`、`PressableFeedback`、`Stepper`、`Timeline`）；定义字体、`tb-num`、`tb-mono`，并给 HeroUI 按钮补上“处理中”的转圈（HeroUI 的 `isPending` 只屏蔽点击，没有视觉变化） |
+| `web/src/styles/admin.css` | 只有后台用的组件库组件样式（外壳、表格、图表、指标卡、底部保存条 `ActionBar` 等），由 `ui.tsx` 引入，随后台代码按需加载 |
+| `web/src/lib/ui-base.tsx` | 基础组件：`Notice` 提示条、`Pill` 标签、`Panel` 卡片、`Empty`（基于 `EmptyState`）、`StatusDot`、`Events`（竖排的步骤或事件记录，基于 `Timeline`）、`Copyable`、`copyText`、站内链接 `RouterLink`、进场动画 `enter`、提示消息、`cx` |
 | `web/src/lib/ui-form.tsx` | 表单控件：`TextInput`、`TextAreaInput`、`SelectInput`、`CheckboxInput`、`SwitchInput`、`RadioInput`、`NumberInput`、`DateTimeInput`，统一带标签、说明和校验提示 |
-| `web/src/lib/ui.tsx` | 后台专用组件：`PageHeader`、`SettingsRow`、`Section`、`Desc`、`Empty`（基于 `EmptyState`）、`FilterTabs`、`Toolbar`、`DataTable`（宽屏是 `DataGrid`，手机是 `ListView`）、`Pager`、`Confirm`、`ConfirmDialog`、`Dialog`、`NoteModal` 等；同时转出上面两个文件的全部内容，后台页面只引这一个 |
+| `web/src/lib/ui.tsx` | 后台专用组件：`PageHeader`、`SettingsRow`、`Section`、`Desc`、`FilterTabs`、`Toolbar`、`DataTable`（宽屏是 `DataGrid`，手机是 `ListView`）、`Pager`、`Confirm`、`ConfirmDialog`、`Dialog`、`NoteModal`、保存冲突用的 `useRevision` 和 `ConflictNotice` 等；同时转出上面两个文件的全部内容，后台页面只引这一个 |
 | `web/src/components/brand.tsx` | 页面里的标志（内联 SVG） |
 
 对外页面不引 `ui.tsx`：收银台只引 `ui-base.tsx`，付款自助和登录再加 `ui-form.tsx`，这样不会连带下载后台的表格、分页、弹窗这些组件和 `admin.css`。
@@ -28,9 +29,11 @@
 
 - **编辑放抽屉**：新建和编辑都在右侧 `Drawer` 里完成。顶部是标题，中间是表单，底部是固定的按钮栏；提交按钮在表单外，用 `form` 属性关联表单。
 - **危险操作要确认**：菜单里触发的删除、重置密钥用 `ConfirmDialog`（居中确认框）；行内按钮用 `Confirm`（确认气泡）；关联、撤销关联、处理异常这类要留痕的操作用 `NoteModal` 填理由，理由记入审计日志。
-- **设置页**：每项一行（`SettingsRow`），左边名称、说明、默认值和可设范围，右边控件。改过才能保存，没改动时保存按钮是灰的，旁边有“撤销修改”；收款参数还能“恢复默认值”。
+- **设置页**：每项一行（`SettingsRow`），左边名称、说明、默认值和可设范围，右边控件。改过才能保存，没改动时保存按钮是灰的，旁边有“撤销修改”。收款参数项目多、表单长，改过之后屏幕底部浮出保存条（`ActionBar`，“撤销修改”和“保存”，手机上只留按钮），“恢复默认值”放在表单末尾。
+- **保存冲突**：设置页各表单、备份与归档页的两个表单、AI 设置、渠道和商户的编辑抽屉都用 `useRevision` 记住载入时的版本，保存时放进 `If-Match`。别处先保存过时服务端返回 409，草稿不丢，保存按钮上方出现 `ConflictNotice`：“载入最新（放弃我的修改）”或“用我的修改覆盖”。不带 `If-Match` 的请求（脚本）不检查。
 - **列表**：宽屏用表格（`DataTable`），手机宽度（640px 以下）换成一行一项的 `ListView`。列表上方用带计数的筛选标签（`FilterTabs`）切换常用视图，比如“待处理异常”“已放弃的通知”。
 - **反馈**：操作结果用右上角的提示消息；页面内需要一直看到的说明和错误用 `Notice`。
+- **动画**：新出现的内容用 `ui-base.tsx` 的 `enter`（淡入并略微下移，200ms），只有进场，收起时立即消失：`Notice` 自带；按开关出现的设置行和区块、收银台换状态（选方式、付款、已支付等）、后台换页、侧栏“有新版本”都加了它。弹窗、抽屉、底部保存条用组件自带的进出场。图表用 recharts 默认的动画，自动刷新拿到一样的数据时不重播：图表数据由 `useMemo` 从查询结果算出，React Query 的结构共享让数据没变时引用也不变。系统开了“减少动态效果”时，CSS 动画由 `theme.css` 关掉，图表由 recharts 自己关掉。
 - **输入框底色**：按 HeroUI 的建议，放在卡片、抽屉、弹窗里的输入框用 `secondary` 变体（灰底、无阴影），页面底色上的（比如订单页的筛选栏）用默认白底。`ui-form.tsx` 的控件和 `SearchInput`、`DateRangeInput` 通过 `useFieldVariant()` 读 HeroUI 的 `SurfaceContext` 自动选；页面里直接用 HeroUI 输入组件时自己加 `variant="secondary"`。
 - **必填和选填**：必填项用 `isRequired`（标签后带星号），要给具体提示（格式、范围）时再加 `validate`，它的文字优先于自带提示；选填项在标签后写“（可选）”。
 
@@ -97,9 +100,9 @@
 - 菜单按“每天看的、配置的、偶尔用的”分三组：
   - **收款**：概览、订单、流水与异常、通知、AI 与付款申诉
   - **配置**：支付渠道、商户、设置
-  - **工具**：监控、支付测试、数据归档
+  - **工具**：监控、支付测试、备份与归档
 - 流水与异常、通知、AI 与付款申诉、监控右侧显示待办数（未处理的异常、放弃了的通知、等人工的申诉、没恢复的告警）。
-- 侧栏底部是付款人自助入口（新标签页打开）和管理员菜单（修改密码、退出登录）。
+- 侧栏底部是付款人自助入口（新标签页打开）、有新版本时的“有新版本”提示（链到“设置 → 站点”）和管理员菜单（标题旁写当前版本；修改密码、退出登录）。
 - 顶栏固定在上方：菜单按钮、当前页面名、演示模式标签、深浅色切换。
 - 每页正文第一行是 `PageHeader`：一句话说明这页做什么，右边是整页的操作按钮。
 
@@ -114,10 +117,10 @@
 | AI 与付款申诉 | 处理付款人的申诉，管 AI 自动处理 | 顶部是 AI 运行状态和设置入口；标签默认停在“待人工处理”；点一条在抽屉里看 AI 结论、付款人提交的信息、付款人看到的回复，填处理说明后回复结案或重新核查 |
 | 支付渠道 | 配好收款渠道并确认能收钱 | 渠道卡片网格，每张显示能否收款、问题、启停开关、测试连接，上游渠道的支付方式标签带单笔限额，并注明哪些是从上游拒单里自动识别的；新建时先选类型；编辑抽屉顶部是配置清单，逐项打勾，上游渠道可以按支付方式填单笔限额 |
 | 商户 | 接入新商户，给出接入信息 | 表格列出渠道、签名方式、域名白名单、订单数；新建后直接弹出接入信息（接口地址、商户号、密钥、平台公钥）；停用、重置密钥、删除在行末菜单里 |
-| 设置 | 调整收款参数、平台密钥、站点名和首页、后台安全入口、管理员通知，查审计日志 | 五个标签；收款参数按“订单 / 金额尾数 / 查账节奏”分组，每项写明默认值、范围和换算后的时长；重新生成平台密钥放在单独的“危险操作”区；站点标签分“站点 / 首页 / 后台安全入口”三块，首页选显示方式（自定义页面可预览），安全入口开启后显示可复制的入口链接、换链接和关闭；管理员通知分“Telegram 机器人 / 接收人 / 发哪些消息”三块，Token 输入框右侧有“粘贴”和显示/隐藏按钮，添加接收人弹出链接和二维码并自动等待绑定完成 |
+| 设置 | 调整收款参数、平台密钥、站点名和首页、后台安全入口、版本提醒、管理员通知，查审计日志 | 五个标签；收款参数按“订单 / 金额尾数 / 查账节奏”分组，每项写明默认值、范围和换算后的时长；重新生成平台密钥放在单独的“危险操作”区；站点标签分“站点 / 首页 / 后台安全入口 / 版本”四块，版本一块显示当前版本、有没有新版本、新版本提醒开关和“现在检查”，首页选显示方式（自定义页面可预览），安全入口开启后显示可复制的入口链接、换链接和关闭；管理员通知分“Telegram 机器人 / 接收人 / 发哪些消息”三块，Token 输入框右侧有“粘贴”和显示/隐藏按钮，添加接收人弹出链接和二维码并自动等待绑定完成 |
 | 支付测试 | 用真钱走一遍完整流程 | 左边新建测试单和最近的测试单（默认显示 6 笔，可展开），右边是选中测试单的三步进度：付款、到账、通知商户；窄屏上进度排在下面，选中后自动滚过去 |
 | 监控 | 系统有没有出问题，告警发给谁 | 进行中的告警（严重在前，写明持续多久、有没有发出 Telegram，带“去处理”）；各渠道运行情况；Telegram 卡片只显示机器人、接收人数、提醒间隔和上次发出时间，“设置”链到“设置 → 管理员通知”；24 小时 / 7 天 / 30 天的订单和通知趋势图；最近恢复的告警 |
-| 数据归档 | 管理在线记录的保留和归档 | 在线保留期设置、归档任务状态、归档批次下载 |
+| 备份与归档 | 数据库有备份可以恢复，在线记录不无限增长 | 上半部分是自动备份（SQLite）：开关和保留份数、上次备份的结果、“立即备份”、服务器上的备份文件列表和恢复步骤；PostgreSQL 时只说明要用数据库自己的备份工具。下半部分是归档：在线保留期设置、归档任务状态、归档批次下载 |
 
 ## 对外页面
 
@@ -127,4 +130,4 @@
 
 ## 体积
 
-以下都是 gzip 后的大小。公共入口（React、路由、数据请求和 HeroUI 基础部分）约 150 KB，样式约 44 KB。收银台在此之外只多约 23 KB；付款自助和登录因为要用表单控件（含日期选择），多约 125–145 KB。后台页面按路由拆包，进后台再下载：后台外壳约 320 KB（组件库的侧栏带动画库 motion），`admin.css` 约 11 KB；概览和监控的图表用组件库的 `BarChart`、`ComposedChart`（基于 recharts），recharts 约 105 KB，两页共用，打开其中一页时才下载，颜色直接用 HeroUI 的主题变量，深浅色自动跟随。zxing 识别二维码的 wasm 仍然按需加载，不进首屏。
+以下都是 gzip 后的大小。公共入口（React、路由、数据请求和 HeroUI 基础部分）约 150 KB，样式约 47 KB。收银台在此之外只多约 26 KB；付款自助和登录因为要用表单控件（含日期选择），多约 125–145 KB。后台页面按路由拆包，进后台再下载：后台外壳约 320 KB（组件库的侧栏带动画库 motion），`admin.css` 约 12 KB；概览和监控的图表用组件库的 `BarChart`、`ComposedChart`（基于 recharts），recharts 约 105 KB，两页共用，打开其中一页时才下载，颜色直接用 HeroUI 的主题变量，深浅色自动跟随。zxing 识别二维码的 wasm 仍然按需加载，不进首屏。

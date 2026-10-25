@@ -219,6 +219,8 @@ export interface Settings {
   home: Home
   entry: { enabled: boolean; url: string }
   demo: boolean
+  /** 各表单的版本，保存时放进 If-Match（见 lib/ui.tsx 的 useRevision） */
+  revisions: { payment: number; site: number; home: number }
 }
 
 /** 首页设置：直接打开域名时显示什么。和 internal/settings/home.go 一致。 */
@@ -338,6 +340,10 @@ export interface Me {
   demo: boolean
   /** 对接方填的接口地址（按对外地址配置算出，以 / 结尾） */
   api_url: string
+  /** 正在运行的版本，开发构建是 dev */
+  version: string
+  /** 有更新的正式版时是它的版本号，否则为空（关了新版本提醒也为空） */
+  new_version: string
 }
 
 export interface Page<T> {

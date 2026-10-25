@@ -15,11 +15,13 @@ import {
   Separator,
   Sidebar,
   Tooltip,
+  Typography,
   useSidebar,
 } from '@yreidev/ui'
 import {
   Archive,
   ArrowRightArrowLeft,
+  ArrowUpFromLine,
   ArrowRightFromSquare,
   ArrowUpRightFromSquare,
   Bell,
@@ -40,7 +42,7 @@ import {
 import { Logo } from '../../components/brand'
 import { ApiError, api, casesCountQuery, meQuery, overviewQuery } from '../../lib/api'
 import { setThemePref, useThemePref, type ThemePref } from '../../lib/theme'
-import { Dialog, TextInput, toastError, toastOK, type Tone } from '../../lib/ui'
+import { Dialog, TextInput, cx, enter, toastError, toastOK, type Tone } from '../../lib/ui'
 
 export const Route = createFileRoute('/admin')({
   beforeLoad: async ({ context, location }) => {
@@ -92,7 +94,7 @@ const groups: { title: string; items: NavItem[] }[] = [
     items: [
       { to: '/admin/monitor', text: '监控', icon: HeartPulse, badge: 'alerts' },
       { to: '/admin/payment-test', text: '支付测试', icon: Flask },
-      { to: '/admin/operations', text: '数据归档', icon: Archive },
+      { to: '/admin/operations', text: '备份与归档', icon: Archive },
     ],
   },
 ]
@@ -156,7 +158,14 @@ function AdminLayout() {
   }, [current, site])
 
   const go = useCallback((href: string) => void navigate({ href }), [navigate])
-  const sidebar = { site, current: current?.to, counts, onPassword: () => setPwOpen(true) }
+  const sidebar = {
+    site,
+    current: current?.to,
+    counts,
+    version: me?.version ?? '',
+    newVersion: me?.new_version ?? '',
+    onPassword: () => setPwOpen(true),
+  }
 
   return (
     <>
@@ -187,7 +196,10 @@ function AdminLayout() {
           tabIndex={-1}
           className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-4 pt-5 pb-12 outline-none sm:px-6"
         >
-          <Outlet />
+          {/* 换页时正文淡入；同一页里换筛选、换标签不重播 */}
+          <div key={path} className={cx('flex flex-1 flex-col', enter)}>
+            <Outlet />
+          </div>
         </div>
       </AppLayout>
       <PasswordModal open={pwOpen} onClose={() => setPwOpen(false)} />
@@ -205,7 +217,9 @@ function AdminNavbar({ title, demo }: { title: string; demo: boolean }) {
         <AppLayout.MenuToggle aria-label="打开导航菜单" className="text-muted" />
         <Sidebar.Trigger aria-label="展开或收起侧边栏" className="text-muted" />
         <Separator orientation="vertical" className="h-5 max-md:hidden" />
-        <h1 className="min-w-0 truncate px-1 text-base font-semibold sm:text-lg">{title}</h1>
+        <Typography.Heading level={1} truncate className="min-w-0 px-1 text-base sm:text-lg">
+          {title}
+        </Typography.Heading>
         <Navbar.Spacer />
         <Navbar.Content>
           {demo && (
@@ -256,12 +270,16 @@ function SidebarBody({
   site,
   current,
   counts,
+  version,
+  newVersion,
   onPassword,
   mobile,
 }: {
   site: string
   current?: string
   counts: Record<Todo, number>
+  version: string
+  newVersion: string
   onPassword: () => void
   mobile?: boolean
 }) {
@@ -323,6 +341,23 @@ function SidebarBody({
               <span className="text-xs text-muted">新标签页</span>
             </Sidebar.MenuChip>
           </Sidebar.MenuItem>
+          {newVersion && (
+            <Sidebar.MenuItem
+              id={id('update')}
+              className={enter}
+              href="/admin/settings?tab=site"
+              textValue={`有新版本 ${newVersion}`}
+              tooltip={`有新版本 ${newVersion}`}
+            >
+              <Sidebar.MenuIcon>
+                <ArrowUpFromLine className="size-4 text-accent" />
+              </Sidebar.MenuIcon>
+              <Sidebar.MenuLabel>有新版本</Sidebar.MenuLabel>
+              <Sidebar.MenuChip>
+                <span className="tb-num text-xs text-accent">{newVersion}</span>
+              </Sidebar.MenuChip>
+            </Sidebar.MenuItem>
+          )}
         </Sidebar.Menu>
         <Dropdown>
           <Dropdown.Trigger
@@ -347,7 +382,10 @@ function SidebarBody({
               }}
             >
               <Dropdown.Section>
-                <Header>{site}</Header>
+                <Header>
+                  {site}
+                  {version && <span className="tb-num ms-1.5 font-normal text-muted">版本 {version}</span>}
+                </Header>
                 <Dropdown.Item id="password" textValue="修改密码">
                   <Key className="size-4 shrink-0 text-muted" />
                   <Label>修改密码</Label>
@@ -421,7 +459,9 @@ function PasswordModal({ open, onClose }: { open: boolean; onClose: () => void }
           }
         }}
       >
-        <p className="text-sm text-muted">改完后，其他设备上的登录会失效，需要用新密码重新登录。</p>
+        <Typography.Paragraph size="sm" color="muted">
+          改完后，其他设备上的登录会失效，需要用新密码重新登录。
+        </Typography.Paragraph>
         <TextInput
           label="原密码"
           type="password"

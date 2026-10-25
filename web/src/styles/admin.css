@@ -6,11 +6,11 @@
  */
 @reference './theme.css';
 @import 'tailwindcss/utilities' layer(ui-utilities) source(none);
+@import '@yreidev/ui/css/action-bar.css';
 @import '@yreidev/ui/css/app-layout.css';
 @import '@yreidev/ui/css/bar-chart.css';
 @import '@yreidev/ui/css/composed-chart.css';
 @import '@yreidev/ui/css/data-grid.css';
-@import '@yreidev/ui/css/empty-state.css';
 @import '@yreidev/ui/css/kpi.css';
 @import '@yreidev/ui/css/list-view.css';
 @import '@yreidev/ui/css/navbar.css';

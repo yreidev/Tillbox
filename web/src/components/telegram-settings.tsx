@@ -2,7 +2,18 @@
 // 结构和 internal/admin/telegram.go 一致。
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Description, Dropdown, Form, ItemCard, ItemCardGroup, Label, Separator } from '@yreidev/ui'
+import {
+  Button,
+  Description,
+  Dropdown,
+  Form,
+  ItemCard,
+  ItemCardGroup,
+  Label,
+  Link,
+  Separator,
+  Typography,
+} from '@yreidev/ui'
 import {
   ArrowUpRightFromSquare,
   ChevronDown,
@@ -18,14 +29,16 @@ import {
   TriangleExclamation,
 } from '@gravity-ui/icons'
 import { encode } from 'uqr'
-import { api } from '../lib/api'
+import { ApiError, api } from '../lib/api'
 import { relative } from '../lib/format'
 import { useNow } from '../lib/now'
 import {
   Confirm,
   ConfirmDialog,
+  ConflictNotice,
   Copyable,
   Dialog,
+  enter,
   Loading,
   Notice,
   NumberInput,
@@ -34,9 +47,9 @@ import {
   StatusDot,
   SwitchInput,
   TextInput,
-  linkClass,
   toastError,
   toastOK,
+  useRevision,
 } from '../lib/ui'
 
 export interface Binding {
@@ -74,6 +87,8 @@ export interface TelegramView {
   chats: TelegramChat[]
   binding: Binding | null
   state: MonitorState
+  /** 保存时放进 If-Match，检查有没有在别处改过 */
+  revision: number
 }
 
 interface Prefs {
@@ -84,6 +99,7 @@ interface Prefs {
 
 export const telegramKey = ['telegram']
 const base = '/web-api/admin/settings/telegram'
+const telegramQuery = { queryKey: telegramKey, queryFn: () => api.get<TelegramView>(base) }
 
 /** 测试消息的种类，和 internal/monitor 的 TestKinds 一致；all 是每种各发一条 */
 const testKinds = [
@@ -95,8 +111,7 @@ const testKinds = [
 
 export function TelegramSettings() {
   const q = useQuery({
-    queryKey: telegramKey,
-    queryFn: () => api.get<TelegramView>(base),
+    ...telegramQuery,
     // 等待绑定时勤快一点，绑好了马上能看到
     refetchInterval: (query) => (query.state.data?.binding ? 2_000 : 15_000),
   })
@@ -106,10 +121,10 @@ export function TelegramSettings() {
   if (!tg) return <Loading />
   return (
     <>
-      <p className="text-sm text-muted">
+      <Typography.Paragraph size="sm" color="muted">
         用 Telegram
         机器人把告警、收款到账和付款申诉推给管理员，只支持和机器人单聊。这里的“通知”是发给自己的；发给商户的异步通知在左侧“通知”页。
-      </p>
+      </Typography.Paragraph>
       {tg.configured && tg.state.send_error_at > tg.state.sent_at && (
         <Notice status="warning" title="最近一次没发出去">
           {relative(tg.state.send_error_at, now)}：{tg.state.send_error}。会在下一轮（30 秒内）重发。
@@ -191,13 +206,21 @@ function BotPanel({ tg }: { tg: TelegramView }) {
   const [token, setToken] = useState('')
   const [clearing, setClearing] = useState(false)
   const save = useMutation({
-    mutationFn: () =>
-      api.put<TelegramView>(base, {
-        token: token.trim(),
-        remind_hours: tg.remind_hours,
-        paid: tg.paid,
-        claims: tg.claims,
-      }),
+    // 只换机器人，发哪些消息沿用服务器上的设置；这期间别处改过时重读一次再存，免得把别人的修改改回去。
+    mutationFn: async () => {
+      const put = (t: TelegramView) =>
+        api.put<TelegramView>(
+          base,
+          { token: token.trim(), remind_hours: t.remind_hours, paid: t.paid, claims: t.claims },
+          { revision: t.revision },
+        )
+      try {
+        return await put(tg)
+      } catch (err) {
+        if (!(err instanceof ApiError && err.status === 409)) throw err
+        return put(await qc.fetchQuery({ ...telegramQuery, staleTime: 0 }))
+      }
+    },
     onSuccess: (r) => {
       qc.setQueryData(telegramKey, r)
       void qc.invalidateQueries({ queryKey: ['monitor'] })
@@ -231,14 +254,9 @@ function BotPanel({ tg }: { tg: TelegramView }) {
             tg.configured ? (
               <>
                 现在是{' '}
-                <a
-                  className={linkClass}
-                  href={`https://t.me/${tg.bot_username}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
+                <Link href={`https://t.me/${tg.bot_username}`} target="_blank" rel="noopener noreferrer">
                   @{tg.bot_username}
-                </a>
+                </Link>
                 。换成另一个机器人会清空已绑定的接收人，需要重新绑定。
               </>
             ) : (
@@ -256,6 +274,7 @@ function BotPanel({ tg }: { tg: TelegramView }) {
         </SettingsRow>
         {tg.configured && (
           <SettingsRow
+            className={enter}
             label="清除设置"
             description="删除机器人 Token 和全部接收人，不再发任何消息。监控页照常检查和显示告警。"
           >
@@ -279,7 +298,9 @@ function BotPanel({ tg }: { tg: TelegramView }) {
           toastOK('已清除，不再发 Telegram 消息')
         }}
       >
-        <p>机器人 Token 和 {tg.chats.length} 个接收人都会删除。之后要用得重新设置和绑定。</p>
+        <Typography.Paragraph size="sm" color="muted">
+          机器人 Token 和 {tg.chats.length} 个接收人都会删除。之后要用得重新设置和绑定。
+        </Typography.Paragraph>
       </ConfirmDialog>
     </Panel>
   )
@@ -397,9 +418,9 @@ function ChatsPanel({ tg, now }: { tg: TelegramView; now: number }) {
           </Notice>
         )}
         {tg.chats.length === 0 ? (
-          <p className="text-sm text-muted">
+          <Typography.Paragraph size="sm" color="muted">
             还没有接收人，消息发不出去。点“添加接收人”，用自己的 Telegram 打开链接，点“开始”就绑好了。
-          </p>
+          </Typography.Paragraph>
         ) : (
           <ItemCardGroup variant="transparent">
             {tg.chats.map((c, i) => (
@@ -457,12 +478,15 @@ function PrefsPanel({ tg }: { tg: TelegramView }) {
   const saved: Prefs = { remind_hours: tg.remind_hours, paid: tg.paid, claims: tg.claims }
   const [v, setV] = useState<Prefs>(saved)
   const dirty = v.remind_hours !== saved.remind_hours || v.paid !== saved.paid || v.claims !== saved.claims
+  const rev = useRevision(tg.revision, !dirty)
   const save = useMutation({
-    mutationFn: () => api.put<TelegramView>(base, { token: '', ...v }),
-    onSuccess: (r) => {
-      qc.setQueryData(telegramKey, r)
-      toastOK('已保存')
-    },
+    mutationFn: (overwrite: boolean) =>
+      rev.run(async (revision) => {
+        const r = await api.put<TelegramView>(base, { token: '', ...v }, { revision })
+        qc.setQueryData(telegramKey, r)
+        return r.revision
+      }, overwrite),
+    onSuccess: (saved) => saved && toastOK('已保存'),
     onError: toastError,
   })
   return (
@@ -471,7 +495,7 @@ function PrefsPanel({ tg }: { tg: TelegramView }) {
         className="flex flex-col gap-5"
         onSubmit={(e) => {
           e.preventDefault()
-          save.mutate()
+          save.mutate(false)
         }}
       >
         <div className="divide-y divide-separator">
@@ -491,10 +515,10 @@ function PrefsPanel({ tg }: { tg: TelegramView }) {
               />
               <span className="pb-2.5 text-sm text-muted">小时</span>
             </div>
-            <p className="-mt-1 text-xs text-muted">
+            <Typography.Paragraph size="xs" color="muted" className="-mt-1">
               默认 <span className="tb-num">1</span> 小时，可设 <span className="tb-num">0–24</span>，填 0
               表示只在开始和恢复时各发一次。
-            </p>
+            </Typography.Paragraph>
           </SettingsRow>
           <SettingsRow
             label="收款到账"
@@ -509,6 +533,16 @@ function PrefsPanel({ tg }: { tg: TelegramView }) {
             <SwitchInput label="发送" value={v.claims} onChange={(claims) => setV((x) => ({ ...x, claims }))} />
           </SettingsRow>
         </div>
+        {rev.conflict && (
+          <ConflictNotice
+            what="发哪些消息"
+            onReload={async () => {
+              const l = await qc.fetchQuery({ ...telegramQuery, staleTime: 0 })
+              setV({ remind_hours: l.remind_hours, paid: l.paid, claims: l.claims })
+            }}
+            onOverwrite={() => save.mutateAsync(true)}
+          />
+        )}
         <div className="flex flex-wrap items-center justify-end gap-2">
           <Button size="sm" variant="tertiary" isDisabled={!dirty} onPress={() => setV(saved)}>
             撤销修改
@@ -562,10 +596,10 @@ function BindDialog({ binding, now, onCancel }: { binding: Binding | null; now: 
     >
       {binding && (
         <div className="flex flex-col items-center gap-4 text-center">
-          <p className="text-sm text-muted">
+          <Typography.Paragraph size="sm" color="muted" align="center">
             用要接收通知的 Telegram
             账号打开这个链接（手机可以直接扫码），在机器人对话里点“开始”（Start）就绑好了。只支持和机器人单聊。
-          </p>
+          </Typography.Paragraph>
           <QRCode text={binding.link} />
           <Button size="sm" onPress={() => window.open(binding.link, '_blank', 'noopener,noreferrer')}>
             <ArrowUpRightFromSquare />在 Telegram 中打开

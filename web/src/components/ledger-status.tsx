@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Button, Tooltip } from '@yreidev/ui'
+import { Button, Tooltip, Typography } from '@yreidev/ui'
 import { ArrowRotateRight } from '@gravity-ui/icons'
 import { api } from '../lib/api'
 import { relative, time } from '../lib/format'
@@ -41,17 +41,21 @@ export function LedgerRow({ status: s, className }: { status: LedgerStatus; clas
           <span className="tb-num text-xs text-muted">{facts.join(' · ')}</span>
         </div>
         {s.enabled && s.last_error && (
-          <p className={s.failures > 0 ? 'mt-1.5 text-xs text-danger' : 'mt-1.5 text-xs text-warning'}>
+          <Typography.Paragraph size="xs" className={cx('mt-1.5', s.failures > 0 ? 'text-danger' : 'text-warning')}>
             {ledgerErrorText(s)}
             {backoff && `。${relative(s.backoff_until, now)}重试`}
-          </p>
+          </Typography.Paragraph>
         )}
-        {health.detail && <p className="mt-1.5 text-xs text-danger">{health.detail}</p>}
+        {health.detail && (
+          <Typography.Paragraph size="xs" className="mt-1.5 text-danger">
+            {health.detail}
+          </Typography.Paragraph>
+        )}
         {s.backfill_error && (
-          <p className="mt-1.5 text-xs text-warning">
+          <Typography.Paragraph size="xs" className="mt-1.5 text-warning">
             历史补扫连续失败 {s.backfill_failures} 次：{s.backfill_error}
             {s.backfill_retry_at > now && `。${relative(s.backfill_retry_at, now)}重试`}
-          </p>
+          </Typography.Paragraph>
         )}
       </div>
       <Tooltip delay={300}>

@@ -12,9 +12,15 @@ export class ApiError extends Error {
 
 type Method = 'GET' | 'POST' | 'PUT' | 'DELETE'
 
-export async function request<T>(method: Method, path: string, body?: unknown): Promise<T> {
+/** revision 是保存时检查冲突用的版本（见 lib/ui.tsx 的 useRevision），放进 If-Match；不带时不检查。 */
+export interface RequestOptions {
+  revision?: number
+}
+
+export async function request<T>(method: Method, path: string, body?: unknown, opts?: RequestOptions): Promise<T> {
   const headers: Record<string, string> = { 'X-Tillbox': '1', Accept: 'application/json' }
   if (body !== undefined) headers['Content-Type'] = 'application/json'
+  if (opts?.revision !== undefined) headers['If-Match'] = String(opts.revision)
   let res: Response
   try {
     res = await fetch(path, {
@@ -45,7 +51,7 @@ export async function request<T>(method: Method, path: string, body?: unknown): 
 export const api = {
   get: <T>(path: string) => request<T>('GET', path),
   post: <T>(path: string, body?: unknown) => request<T>('POST', path, body ?? {}),
-  put: <T>(path: string, body: unknown) => request<T>('PUT', path, body),
+  put: <T>(path: string, body: unknown, opts?: RequestOptions) => request<T>('PUT', path, body, opts),
   del: <T>(path: string) => request<T>('DELETE', path),
 }
 

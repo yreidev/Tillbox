@@ -145,10 +145,14 @@ TanStack Router 自动生成 `web/src/routeTree.gen.ts`，生成文件纳入版�
 - 没落到路由的出错页，后台页面没被跳回登录页；
 - 页面不横向滚动。
 
+付款人会打开的收银台（待付和已付）和付款自助页另外在有数据的实例上（只在 `data-mobile-light` 项目里）按两种手机姿势再查一遍：320 宽、根字号 150%（大致相当于安卓最大字号或 iOS 页面缩放 150%），以及横屏 640×320。除了上面几项，还逐个元素看有没有超出屏幕（卡片是 `overflow-hidden`，挤出去的内容会被裁掉而不会让页面横向滚动），并确认“我已付款”能滚动到。
+
+`web/e2e/conflict.spec.ts` 在 `data-desktop-light` 项目里走一遍保存冲突：打开“设置 → 站点”后在别处改掉站点名称，页面再保存应提示冲突、草稿保留，“载入最新”和“用我的修改覆盖”各试一次，最后改回原来的名字。
+
 两个实例只监听 `127.0.0.1:18591` 和 `127.0.0.1:18592`，数据目录在 `web/e2e/.data/`，每次运行前清空；检查跑完 Playwright 会停掉它们。Chromium 由 `make deps` 装，版本跟着 `web/package.json` 里的 `@playwright/test`；单独装用 `pnpm --dir web exec playwright install chromium`，缺系统库时加 `--with-deps`（要 sudo）。
 
 - 只跑一部分：`pnpm --dir web exec playwright test -c e2e --project setup --project data-desktop-light`。项目名是 `<empty|data>-<desktop|mobile>-<light|dark>`，`setup` 负责登录和造数据，不能省。
-- 改版后人工过一遍：加环境变量 `E2E_SCREENSHOTS=1`，每页的整页截图存到 `web/test-results/<用例>/page.png`。
+- 改版后人工过一遍：加环境变量 `E2E_SCREENSHOTS=1`，每页的整页截图存到 `web/test-results/<用例>/page.png`，大字号和横屏的另存为 `tight.png`。
 - 没过时 `web/test-results/` 里有截图和 trace，用 `pnpm --dir web exec playwright show-trace <trace.zip>` 打开；CI 没过时上传 HTML 报告（附件 `playwright-report`）。
 - 新增页面要加进 `web/e2e/pages.spec.ts` 的页面列表。
 

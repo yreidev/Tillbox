@@ -1,7 +1,7 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Form } from '@yreidev/ui'
+import { ActionBar, Button, Form, Link, Surface, Typography } from '@yreidev/ui'
 import { ArrowsRotateRight, ArrowUpRightFromSquare, Copy, Eye, Shield } from '@gravity-ui/icons'
 import { TelegramSettings } from '../../components/telegram-settings'
 import { api, query } from '../../lib/api'
@@ -10,8 +10,10 @@ import type { AuditLog, Home, HomeMode, Page, Payment, Settings } from '../../li
 import {
   Code,
   ConfirmDialog,
+  ConflictNotice,
   copyText,
   cx,
+  enter,
   DataTable,
   Dialog,
   FilterTabs,
@@ -24,10 +26,12 @@ import {
   RadioInput,
   SettingsRow,
   Stack,
+  SwitchInput,
   TextAreaInput,
   TextInput,
   toastError,
   toastOK,
+  useRevision,
   type Option,
   type Tone,
 } from '../../lib/ui'
@@ -59,7 +63,7 @@ function SettingsPage() {
   const body = (render: (s: Settings) => ReactNode) => (q.data ? render(q.data) : q.isPending ? <Loading /> : null)
   return (
     <div className="flex flex-col gap-4">
-      <PageHeader description="收款节奏、对接用的平台密钥、站点名称和首页、发给管理员的 Telegram 通知，以及所有管理操作的记录。" />
+      <PageHeader description="收款节奏、对接用的平台密钥、站点名称和首页、版本更新、发给管理员的 Telegram 通知，以及所有管理操作的记录。" />
       {q.isError && <Notice status="danger">{q.error.message}</Notice>}
       <FilterTabs<Tab>
         ariaLabel="设置分类"
@@ -75,6 +79,7 @@ function SettingsPage() {
               <SiteForm s={s} />
               <HomeForm s={s} />
               <EntryPanel s={s} />
+              <UpdatePanel />
             </>
           ))}
         {tab === 'notify' && <TelegramSettings />}
@@ -179,28 +184,45 @@ function human(n: number | undefined, unit: Field['unit']) {
   return `≈ ${(n / 60).toFixed(1)} 分钟`
 }
 
+// useLatestSettings 重新读一次设置（不用缓存），给“载入最新”用。
+function useLatestSettings() {
+  const qc = useQueryClient()
+  return () => qc.fetchQuery({ ...settingsQuery, staleTime: 0 })
+}
+
 function PaymentForm({ s }: { s: Settings }) {
   const qc = useQueryClient()
+  const latest = useLatestSettings()
   const [busy, setBusy] = useState(false)
   const [v, setV] = useState<Payment>(s.payment)
   const dirty = allFields.some((f) => v[f.field] !== s.payment[f.field])
+  const rev = useRevision(s.revisions.payment, !dirty)
   const isDefault = allFields.every((f) => v[f.field] === s.defaults[f.field])
+  const save = async (overwrite = false) => {
+    setBusy(true)
+    try {
+      const body = Object.fromEntries(allFields.map((f) => [f.field, Number(v[f.field])]))
+      const saved = await rev.run(
+        async (revision) =>
+          (await api.put<{ revision: number }>('/web-api/admin/settings/payment', body, { revision })).revision,
+        overwrite,
+      )
+      if (saved) {
+        toastOK('已保存，新订单开始生效')
+        await qc.invalidateQueries({ queryKey: ['settings'] })
+      }
+    } catch (err) {
+      toastError(err)
+    } finally {
+      setBusy(false)
+    }
+  }
   return (
     <Form
-      className="flex flex-col gap-4"
-      onSubmit={async (e) => {
+      className={cx('flex flex-col gap-4', dirty && 'pb-16')}
+      onSubmit={(e) => {
         e.preventDefault()
-        setBusy(true)
-        try {
-          const body = Object.fromEntries(allFields.map((f) => [f.field, Number(v[f.field])]))
-          await api.put('/web-api/admin/settings/payment', body)
-          toastOK('已保存，新订单开始生效')
-          await qc.invalidateQueries({ queryKey: ['settings'] })
-        } catch (err) {
-          toastError(err)
-        } finally {
-          setBusy(false)
-        }
+        void save()
       }}
     >
       {groups.map((g) => (
@@ -241,31 +263,46 @@ function PaymentForm({ s }: { s: Settings }) {
                   <span className="tb-num text-xs text-muted">{human(v[f.field], f.unit)}</span>
                 </div>
                 {f.field === 'max_tail_cents' && v.max_tail_cents > 0 && (
-                  <p className="text-xs text-muted">
+                  <Typography.Paragraph size="xs" color="muted">
                     例：10.00 元的订单，付款人要付{' '}
                     <span className="tb-num">10.01～10.{String(Math.min(v.max_tail_cents, 99)).padStart(2, '0')}</span>{' '}
                     元中的一个金额。
-                  </p>
+                  </Typography.Paragraph>
                 )}
               </SettingsRow>
             ))}
           </div>
         </Panel>
       ))}
-      <div className="sticky bottom-4 z-10 flex flex-wrap items-center gap-2 rounded-2xl bg-surface px-4 py-3 shadow-overlay">
-        <span className="me-auto text-sm text-muted">
-          {dirty ? '有未保存的修改，保存后对新订单生效。' : '修改后在这里保存。'}
-        </span>
-        <Button size="sm" variant="ghost" isDisabled={isDefault} onPress={() => setV(s.defaults)}>
+      {rev.conflict && (
+        <ConflictNotice
+          what="收款参数"
+          onReload={async () => setV((await latest()).payment)}
+          onOverwrite={() => save(true)}
+        />
+      )}
+      <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
+        <Typography.Paragraph size="sm" color="muted">
+          拿不准怎么设时可以恢复默认值，恢复后要保存才生效。
+        </Typography.Paragraph>
+        <Button size="sm" variant="secondary" isDisabled={isDefault} onPress={() => setV(s.defaults)}>
           恢复默认值
         </Button>
-        <Button size="sm" variant="tertiary" isDisabled={!dirty} onPress={() => setV(s.payment)}>
-          撤销修改
-        </Button>
-        <Button size="sm" type="submit" isDisabled={!dirty} isPending={busy}>
-          保存
-        </Button>
       </div>
+      {/* 改过才浮出底部的保存条；手机上只留按钮，提示文字留给屏幕阅读器。 */}
+      <ActionBar isOpen={dirty || busy} aria-label="保存收款参数">
+        <ActionBar.Prefix>
+          <span className="action-bar__label">有未保存的修改，保存后对新订单生效</span>
+        </ActionBar.Prefix>
+        <ActionBar.Content>
+          <Button size="sm" variant="tertiary" isDisabled={busy} onPress={() => setV(s.payment)}>
+            撤销修改
+          </Button>
+          <Button size="sm" type="submit" isPending={busy}>
+            保存
+          </Button>
+        </ActionBar.Content>
+      </ActionBar>
     </Form>
   )
 }
@@ -280,9 +317,9 @@ function Platform({ s }: { s: Settings }) {
         description="V2 接口（RSA 签名）用平台私钥给响应和通知签名，对接方用这个公钥验签。平台私钥加密存储，不会显示。"
       >
         <div className="flex flex-col gap-2">
-          <pre className="tb-mono max-h-40 overflow-auto rounded-xl bg-default/60 px-3 py-2.5 text-xs break-all whitespace-pre-wrap">
-            {s.platform_public_key}
-          </pre>
+          <Surface variant="secondary" className="max-h-40 overflow-auto rounded-xl px-3 py-2.5">
+            <pre className="tb-mono text-xs break-all whitespace-pre-wrap">{s.platform_public_key}</pre>
+          </Surface>
           <div>
             <Button size="sm" variant="secondary" onPress={() => void copyText(s.platform_public_key)}>
               <Copy />
@@ -314,7 +351,9 @@ function Platform({ s }: { s: Settings }) {
           await qc.invalidateQueries({ queryKey: ['settings'] })
         }}
       >
-        <p>所有用 V2 接口的对接方都要换成新的平台公钥，否则验签会失败。只用 V1（MD5）的对接方不受影响。</p>
+        <Typography.Paragraph size="sm" color="muted">
+          所有用 V2 接口的对接方都要换成新的平台公钥，否则验签会失败。只用 V1（MD5）的对接方不受影响。
+        </Typography.Paragraph>
       </ConfirmDialog>
     </>
   )
@@ -322,10 +361,18 @@ function Platform({ s }: { s: Settings }) {
 
 function SiteForm({ s }: { s: Settings }) {
   const qc = useQueryClient()
+  const latest = useLatestSettings()
   const [name, setName] = useState(s.site.name)
+  const rev = useRevision(s.revisions.site, name.trim() === s.site.name)
   const save = useMutation({
-    mutationFn: () => api.put('/web-api/admin/settings/site', { name }),
-    onSuccess: async () => {
+    mutationFn: (overwrite: boolean) =>
+      rev.run(
+        async (revision) =>
+          (await api.put<{ revision: number }>('/web-api/admin/settings/site', { name }, { revision })).revision,
+        overwrite,
+      ),
+    onSuccess: async (saved) => {
+      if (!saved) return
       toastOK('已保存')
       await qc.invalidateQueries()
     },
@@ -336,7 +383,7 @@ function SiteForm({ s }: { s: Settings }) {
       <Form
         onSubmit={(e) => {
           e.preventDefault()
-          save.mutate()
+          save.mutate(false)
         }}
       >
         <SettingsRow
@@ -357,6 +404,13 @@ function SiteForm({ s }: { s: Settings }) {
             </Button>
           </div>
         </SettingsRow>
+        {rev.conflict && (
+          <ConflictNotice
+            what="站点名称"
+            onReload={async () => setName((await latest()).site.name)}
+            onOverwrite={() => save.mutateAsync(true)}
+          />
+        )}
       </Form>
     </Panel>
   )
@@ -376,14 +430,22 @@ const kb = (n: number) => `${(n / 1024).toFixed(n < 10240 ? 1 : 0)} KB`
 
 function HomeForm({ s }: { s: Settings }) {
   const qc = useQueryClient()
+  const latest = useLatestSettings()
   const [v, setV] = useState<Home>(s.home)
   const [preview, setPreview] = useState(false)
   const size = useMemo(() => new TextEncoder().encode(v.html).length, [v.html])
   const dirty = v.mode !== s.home.mode || v.html !== s.home.html || v.url.trim() !== s.home.url
+  const rev = useRevision(s.revisions.home, !dirty)
   const set = (x: Partial<Home>) => setV((o) => ({ ...o, ...x }))
   const save = useMutation({
-    mutationFn: () => api.put('/web-api/admin/settings/home', v),
-    onSuccess: async () => {
+    mutationFn: (overwrite: boolean) =>
+      rev.run(
+        async (revision) =>
+          (await api.put<{ revision: number }>('/web-api/admin/settings/home', v, { revision })).revision,
+        overwrite,
+      ),
+    onSuccess: async (saved) => {
+      if (!saved) return
       toastOK('已保存，首页立即生效')
       await qc.invalidateQueries({ queryKey: ['settings'] })
     },
@@ -404,7 +466,7 @@ function HomeForm({ s }: { s: Settings }) {
         className="flex flex-col"
         onSubmit={(e) => {
           e.preventDefault()
-          save.mutate()
+          save.mutate(false)
         }}
       >
         <div className="divide-y divide-separator">
@@ -413,6 +475,7 @@ function HomeForm({ s }: { s: Settings }) {
           </SettingsRow>
           {v.mode === 'page' && (
             <SettingsRow
+              className={enter}
               label="页面 HTML"
               description="原样返回给浏览器，最多 512 KB。图片、样式可以写在页面里或用外部链接。页面里的脚本在隔离环境中运行，读不到本站的 cookie 和本地存储，也调不了后台接口。"
             >
@@ -440,7 +503,11 @@ function HomeForm({ s }: { s: Settings }) {
             </SettingsRow>
           )}
           {v.mode === 'redirect' && (
-            <SettingsRow label="跳转网址" description="用临时跳转（302），浏览器不会记住，改回别的首页后立即生效。">
+            <SettingsRow
+              className={enter}
+              label="跳转网址"
+              description="用临时跳转（302），浏览器不会记住，改回别的首页后立即生效。"
+            >
               <TextInput
                 ariaLabel="跳转网址"
                 isRequired
@@ -458,6 +525,13 @@ function HomeForm({ s }: { s: Settings }) {
             </SettingsRow>
           )}
         </div>
+        {rev.conflict && (
+          <ConflictNotice
+            what="首页设置"
+            onReload={async () => setV((await latest()).home)}
+            onOverwrite={() => save.mutateAsync(true)}
+          />
+        )}
         <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-separator pt-4">
           <span className="me-auto text-sm text-muted">{dirty ? '有未保存的修改。' : '保存后立即生效。'}</span>
           <Button size="sm" variant="tertiary" isDisabled={!dirty} onPress={() => setV(s.home)}>
@@ -491,10 +565,10 @@ const entryConfirm: Record<
     ok: '开启',
     status: 'warning',
     body: (
-      <p>
+      <Typography.Paragraph size="sm" color="muted">
         当前浏览器自动放行。其他设备和浏览器要先打开入口链接才看得到登录页，请把链接存进密码管理器。忘了也能在服务器上运行{' '}
         <Code>tillbox entry</Code> 找回。
-      </p>
+      </Typography.Paragraph>
     ),
     done: '已开启，请把入口链接存好',
   },
@@ -502,14 +576,22 @@ const entryConfirm: Record<
     title: '换一个入口链接？',
     ok: '换一个',
     status: 'warning',
-    body: <p>旧链接立即失效，已经放行的其他浏览器也要重新打开新链接。当前浏览器自动放行。</p>,
+    body: (
+      <Typography.Paragraph size="sm" color="muted">
+        旧链接立即失效，已经放行的其他浏览器也要重新打开新链接。当前浏览器自动放行。
+      </Typography.Paragraph>
+    ),
     done: '已换成新的入口链接，旧链接失效',
   },
   off: {
     title: '关闭后台安全入口？',
     ok: '关闭',
     status: 'danger',
-    body: <p>关闭后，任何人都能打开登录页和后台接口（仍然要密码才能登录）。</p>,
+    body: (
+      <Typography.Paragraph size="sm" color="muted">
+        关闭后，任何人都能打开登录页和后台接口（仍然要密码才能登录）。
+      </Typography.Paragraph>
+    ),
     done: '已关闭后台安全入口',
   },
 }
@@ -531,7 +613,7 @@ function EntryPanel({ s }: { s: Settings }) {
       description="开启后，只有打开过入口链接的浏览器才看得到后台和登录页；其他人访问后台、登录页和后台接口，得到的和不存在的路径一样是 404。"
     >
       {e.enabled ? (
-        <div className="divide-y divide-separator">
+        <div className={cx('divide-y divide-separator', enter)}>
           <SettingsRow
             label="入口链接"
             description="在新设备或新浏览器上先打开一次，这个浏览器之后 400 天内不用再开。请存进密码管理器，不要发给别人。"
@@ -554,14 +636,14 @@ function EntryPanel({ s }: { s: Settings }) {
                 </Button>
               }
             />
-            <div className="flex flex-col gap-1 text-xs text-muted">
-              <p>
+            <div className="flex flex-col gap-1">
+              <Typography.Paragraph size="xs" color="muted">
                 忘了链接：在服务器上运行 <Code>tillbox entry</Code> 查看。
-              </p>
-              <p>
+              </Typography.Paragraph>
+              <Typography.Paragraph size="xs" color="muted">
                 从 Telegram 通知的按钮打开后台看到 404：Telegram 自带的浏览器也要打开一次入口链接，或者让 Telegram
                 用系统浏览器打开链接。
-              </p>
+              </Typography.Paragraph>
             </div>
           </SettingsRow>
           <SettingsRow label="换一个链接" description="链接泄露时用。旧链接和已经放行的浏览器全部失效。">
@@ -582,6 +664,7 @@ function EntryPanel({ s }: { s: Settings }) {
         </div>
       ) : (
         <SettingsRow
+          className={enter}
           label="未开启"
           description="现在任何人都能打开登录页。开启后当前浏览器自动放行，别的设备要先打开入口链接。"
         >
@@ -609,6 +692,127 @@ function EntryPanel({ s }: { s: Settings }) {
         {c.body}
       </ConfirmDialog>
     </Panel>
+  )
+}
+
+interface UpdateView {
+  current: string
+  latest: string
+  newer: boolean
+  notes_url: string
+  checked_at: number
+  error: string
+  check: boolean
+  revision: number
+}
+
+const updateQuery = { queryKey: ['update'], queryFn: () => api.get<UpdateView>('/web-api/admin/update') }
+
+// UpdatePanel 是版本和新版本提醒。提醒开关改了马上保存。
+function UpdatePanel() {
+  const qc = useQueryClient()
+  const q = useQuery(updateQuery)
+  const u = q.data
+  return (
+    <Panel
+      title="版本"
+      description="新版本提醒每 12 小时向 GitHub（api.github.com）查一次 Tillbox 的正式版，只读公开的版本列表，不发送本站的任何信息；GitHub 能看到服务器的出口 IP。"
+    >
+      {q.isError && <Notice status="danger">{q.error.message}</Notice>}
+      {q.isPending && <Loading />}
+      {u && (
+        <UpdateBody
+          key={u.revision}
+          u={u}
+          onChange={async (v) => {
+            qc.setQueryData(updateQuery.queryKey, v)
+            await qc.invalidateQueries({ queryKey: ['me'] })
+          }}
+        />
+      )}
+    </Panel>
+  )
+}
+
+function UpdateBody({ u, onChange }: { u: UpdateView; onChange: (v: UpdateView) => Promise<void> }) {
+  const qc = useQueryClient()
+  const [check, setCheck] = useState(u.check)
+  const rev = useRevision(u.revision, check === u.check)
+  const save = async (next: boolean, overwrite = false) => {
+    setCheck(next)
+    let view: UpdateView | undefined
+    try {
+      const saved = await rev.run(async (revision) => {
+        view = await api.put<UpdateView>('/web-api/admin/settings/update', { check: next }, { revision })
+        return view.revision
+      }, overwrite)
+      if (saved && view) {
+        toastOK(next ? '已开启新版本提醒' : '已关闭新版本提醒')
+        await onChange(view)
+      }
+    } catch (err) {
+      setCheck(u.check)
+      toastError(err)
+    }
+  }
+  const run = useMutation({
+    mutationFn: () => api.post<UpdateView>('/web-api/admin/update/check'),
+    onSuccess: async (v) => {
+      toastOK(v.newer ? `有新版本 ${v.latest}` : '已经是最新版本')
+      await onChange(v)
+    },
+    onError: async (err) => {
+      toastError(err)
+      await qc.invalidateQueries({ queryKey: updateQuery.queryKey })
+    },
+  })
+  const status: { tone: Tone; text: string } =
+    u.current === 'dev'
+      ? { tone: 'default', text: '开发构建，不和正式版比较' }
+      : u.newer
+        ? { tone: 'warning', text: `有新版本 ${u.latest}` }
+        : u.latest
+          ? { tone: 'success', text: '已是最新' }
+          : { tone: 'default', text: '还没检查过' }
+  return (
+    <div className="divide-y divide-separator">
+      <SettingsRow label="当前版本">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="tb-num text-sm font-medium">{u.current}</span>
+          <Pill tone={status.tone}>{status.text}</Pill>
+          {u.notes_url && (
+            <Link href={u.notes_url} target="_blank" rel="noreferrer" className="text-sm">
+              {u.latest} 的更新说明
+              <Link.Icon />
+            </Link>
+          )}
+        </div>
+      </SettingsRow>
+      <SettingsRow label="新版本提醒" description="有新的正式版时在侧栏底部提示。关掉后不再自动检查，可以手动检查。">
+        <SwitchInput
+          label={check ? '已开启' : '已关闭'}
+          value={check}
+          isDisabled={rev.conflict}
+          onChange={(v) => void save(v)}
+        />
+        {rev.conflict && (
+          <ConflictNotice what="新版本提醒" onReload={() => setCheck(u.check)} onOverwrite={() => save(check, true)} />
+        )}
+      </SettingsRow>
+      <SettingsRow
+        label="上次检查"
+        description={u.error ? undefined : '升级步骤见部署文档；升级前先在“备份与归档”页立即备份一次。'}
+      >
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="tb-num text-sm">{time(u.checked_at) || '还没检查过'}</span>
+          <Button size="sm" variant="secondary" isPending={run.isPending} onPress={() => run.mutate()}>
+            <ArrowsRotateRight />
+            现在检查
+          </Button>
+        </div>
+        {u.error && <Notice status="warning">上次检查失败：{u.error}</Notice>}
+      </SettingsRow>
+    </div>
   )
 }
 
@@ -667,7 +871,9 @@ function Audit() {
   })
   return (
     <>
-      <p className="text-sm text-muted">后台和 AI 自动处理做过的每一项改动都记在这里，不能修改或删除。</p>
+      <Typography.Paragraph size="sm" color="muted">
+        后台和 AI 自动处理做过的每一项改动都记在这里，不能修改或删除。
+      </Typography.Paragraph>
       {q.isError && <Notice status="danger">{q.error.message}</Notice>}
       <DataTable
         label="审计日志"
@@ -687,7 +893,11 @@ function Audit() {
               {l.actor}
               {l.target && ` · ${l.target}`}
             </span>
-            {l.detail && <p className="text-sm break-all">{l.detail}</p>}
+            {l.detail && (
+              <Typography.Paragraph size="sm" className="break-all">
+                {l.detail}
+              </Typography.Paragraph>
+            )}
           </div>
         )}
         columns={[

@@ -8,7 +8,6 @@ import {
   DataGrid,
   DateField,
   DateRangePicker,
-  EmptyState,
   Label,
   Link,
   ListView,
@@ -20,16 +19,18 @@ import {
   Skeleton,
   Spinner,
   Tabs,
+  Typography,
   type DataGridColumn,
   type Key,
 } from '@yreidev/ui'
-import { Tray, Xmark } from '@gravity-ui/icons'
+import { Xmark } from '@gravity-ui/icons'
 import { fromDate, getLocalTimeZone, toCalendarDate } from '@internationalized/date'
+import { ApiError } from './api'
 import { yuan } from './format'
 import type { OrderState } from './types'
 import '../styles/admin.css'
 import { stateColor, stateText } from './types'
-import { cx, toastError, Pill, type Tone } from './ui-base'
+import { cx, Empty, toastError, Notice, Pill, type Tone } from './ui-base'
 import { TextAreaInput, useFieldVariant, type FieldProps } from './ui-form'
 
 export * from './ui-base'
@@ -42,7 +43,7 @@ export function Mono({ children }: { children: ReactNode }) {
 
 /** Code 是正文里的一小段代码或地址。 */
 export function Code({ children }: { children: ReactNode }) {
-  return <code className="tb-mono rounded-md bg-default px-1.5 py-0.5 text-foreground">{children}</code>
+  return <Typography.Code className="tb-mono">{children}</Typography.Code>
 }
 
 /** OrderLink 是表格里点开订单详情的订单号（键盘也能点）。 */
@@ -85,7 +86,13 @@ export function PageHeader({
     <div className="flex flex-col gap-3">
       {(description || actions) && (
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-          {description ? <p className="min-w-0 text-sm text-muted">{description}</p> : <span />}
+          {description ? (
+            <Typography.Paragraph size="sm" color="muted" className="min-w-0">
+              {description}
+            </Typography.Paragraph>
+          ) : (
+            <span />
+          )}
           {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
         </div>
       )}
@@ -99,16 +106,27 @@ export function SettingsRow({
   label,
   description,
   children,
+  className,
 }: {
   label: ReactNode
   description?: ReactNode
   children: ReactNode
+  className?: string
 }) {
   return (
-    <div className="grid gap-x-8 gap-y-3 py-5 first:pt-0 last:pb-0 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+    <div
+      className={cx(
+        'grid gap-x-8 gap-y-3 py-5 first:pt-0 last:pb-0 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]',
+        className,
+      )}
+    >
       <div className="min-w-0">
         <div className="text-sm font-medium">{label}</div>
-        {description && <p className="mt-1 text-sm text-muted">{description}</p>}
+        {description && (
+          <Typography.Paragraph size="sm" color="muted" className="mt-1">
+            {description}
+          </Typography.Paragraph>
+        )}
       </div>
       <div className="flex min-w-0 flex-col gap-3">{children}</div>
     </div>
@@ -130,7 +148,9 @@ export function Section({
   return (
     <section className={cx('flex flex-col gap-3', className)}>
       <div className="flex items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold">{title}</h3>
+        <Typography.Heading level={3} className="text-sm">
+          {title}
+        </Typography.Heading>
         {extra}
       </div>
       {children}
@@ -158,32 +178,6 @@ export function Desc({
           ),
       )}
     </dl>
-  )
-}
-
-/** Empty 是没有数据时的占位。 */
-export function Empty({
-  title,
-  description,
-  icon,
-  children,
-  className,
-}: {
-  title?: ReactNode
-  description?: ReactNode
-  icon?: ReactNode
-  children?: ReactNode
-  className?: string
-}) {
-  return (
-    <EmptyState size="sm" className={className}>
-      <EmptyState.Header>
-        <EmptyState.Media variant="icon">{icon ?? <Tray />}</EmptyState.Media>
-        {title && <EmptyState.Title>{title}</EmptyState.Title>}
-        {description && <EmptyState.Description>{description}</EmptyState.Description>}
-      </EmptyState.Header>
-      {children && <EmptyState.Content>{children}</EmptyState.Content>}
-    </EmptyState>
   )
 }
 
@@ -453,6 +447,86 @@ export function Pager({
   )
 }
 
+/**
+ * useRevision 给表单做保存冲突检测：保存时把表单内容对应的版本（设置的保存时刻、渠道和商户的修改时间）放进 If-Match。
+ * latest 是服务器上的最新版本，clean 表示表单内容和服务器上的一样：一样时跟着最新版本走；改动后停在改动前的版本，
+ * 这期间别处保存过，服务端就返回 409。草稿不丢，conflict 变真，表单里显示 ConflictNotice，
+ * 管理员选“载入最新”（把表单换成服务器上的内容）或“用我的修改覆盖”（不带版本再存一次）。
+ */
+export function useRevision(latest: number, clean: boolean) {
+  const [base, setBase] = useState(latest)
+  const [conflict, setConflict] = useState(false)
+  // 渲染时按需调整自己的状态（React 推荐的写法），不用 effect 多渲染一轮。
+  if (clean && base !== latest) setBase(latest)
+  if (clean && conflict) setConflict(false)
+  const revision = clean ? latest : base
+  return {
+    revision,
+    conflict,
+    /**
+     * run 执行一次保存。save 收到要带的版本（覆盖时为 undefined），返回保存后的新版本。
+     * 保存成功返回 true；冲突返回 false 并显示提示；其他错误照常抛出。
+     */
+    run: async (save: (revision?: number) => Promise<number | undefined>, overwrite = false) => {
+      try {
+        const next = await save(overwrite ? undefined : revision)
+        if (next !== undefined) setBase(next)
+        setConflict(false)
+        return true
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 409) {
+          setConflict(true)
+          return false
+        }
+        throw err
+      }
+    },
+    /** 自己的另一项操作（例如生成密钥对）把版本从 from 改成了 to：表单原本基于 from 时跟着换成 to，接着保存不会误报冲突。 */
+    moved: (from: number, to: number) => setBase((b) => (b === from ? to : b)),
+  }
+}
+
+/** ConflictNotice 是保存冲突时的提示，放在表单的保存按钮上方。两个操作出错时弹出错误提示。 */
+export function ConflictNotice({
+  what = '这些设置',
+  onReload,
+  onOverwrite,
+}: {
+  what?: string
+  onReload: () => Promise<unknown> | void
+  onOverwrite: () => Promise<unknown> | void
+}) {
+  const [busy, setBusy] = useState<'' | 'reload' | 'overwrite'>('')
+  const act = (k: 'reload' | 'overwrite', f: () => Promise<unknown> | void) => async () => {
+    setBusy(k)
+    try {
+      await f()
+    } catch (err) {
+      toastError(err)
+    } finally {
+      setBusy('')
+    }
+  }
+  return (
+    <Notice status="warning" title={`${what}在你打开之后已经在别处改过`}>
+      可能是另一个标签页、另一个管理员或命令行改的。你的修改还在页面上，还没有保存。
+      <span className="mt-2 flex flex-wrap gap-2">
+        <Button size="sm" variant="secondary" isPending={busy === 'reload'} onPress={act('reload', onReload)}>
+          载入最新（放弃我的修改）
+        </Button>
+        <Button
+          size="sm"
+          variant="danger-soft"
+          isPending={busy === 'overwrite'}
+          onPress={act('overwrite', onOverwrite)}
+        >
+          用我的修改覆盖
+        </Button>
+      </span>
+    </Notice>
+  )
+}
+
 /** Confirm 点按钮后先弹出确认气泡，确认了才执行。children 是触发按钮。 */
 export function Confirm({
   title,
@@ -476,7 +550,11 @@ export function Confirm({
       <Popover.Content className="max-w-80">
         <Popover.Dialog>
           <Popover.Heading className="font-medium">{title}</Popover.Heading>
-          {content && <p className="mt-1 text-sm text-muted">{content}</p>}
+          {content && (
+            <Typography.Paragraph size="sm" color="muted" className="mt-1">
+              {content}
+            </Typography.Paragraph>
+          )}
           <div className="mt-3 flex justify-end gap-2">
             <Button size="sm" variant="tertiary" onPress={() => setOpen(false)}>
               取消
@@ -778,7 +856,11 @@ export function NoteModal({
       }
     >
       <div className="flex flex-col gap-3">
-        {description && <p className="text-sm text-muted">{description}</p>}
+        {description && (
+          <Typography.Paragraph size="sm" color="muted">
+            {description}
+          </Typography.Paragraph>
+        )}
         {children}
         <TextAreaInput
           label="理由"

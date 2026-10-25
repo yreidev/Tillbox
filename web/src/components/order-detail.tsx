@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Drawer } from '@yreidev/ui'
+import { Button, Drawer, Typography } from '@yreidev/ui'
 import { ArrowUpRightFromSquare, Bell, CircleXmark, LinkSlash } from '@gravity-ui/icons'
 import { api } from '../lib/api'
 import { relative, time, yuan } from '../lib/format'
@@ -182,10 +182,10 @@ export function OrderDetail({ id, onClose }: { id: number | null; onClose: () =>
                   <StateTag state={o.state} />
                   {o.is_test && <Pill>测试订单</Pill>}
                 </div>
-                <p className="truncate text-sm">
+                <Typography.Paragraph size="sm" className="truncate">
                   {o.name}
                   <span className="text-muted"> · {o.merchant_name || `已删除的商户（${o.merchant_id}）`}</span>
-                </p>
+                </Typography.Paragraph>
                 <div className="flex flex-wrap gap-2">
                   {o.state === 'pending' && (
                     <Confirm
@@ -318,7 +318,9 @@ export function OrderDetail({ id, onClose }: { id: number | null; onClose: () =>
                       ]}
                     />
                   ) : (
-                    <p className="text-sm text-muted">还没有关联到账流水。</p>
+                    <Typography.Paragraph size="sm" color="muted">
+                      还没有关联到账流水。
+                    </Typography.Paragraph>
                   )}
                 </Section>
 
@@ -339,8 +341,12 @@ export function OrderDetail({ id, onClose }: { id: number | null; onClose: () =>
                         meta: time(a.created_at, false),
                         children: (
                           <>
-                            <p className="text-foreground">{a.detail}</p>
-                            {a.note && <p className="mt-0.5 text-xs">处理说明：{a.note}</p>}
+                            <Typography.Paragraph size="sm">{a.detail}</Typography.Paragraph>
+                            {a.note && (
+                              <Typography.Paragraph size="xs" color="muted" className="mt-0.5">
+                                处理说明：{a.note}
+                              </Typography.Paragraph>
+                            )}
                           </>
                         ),
                       }))}
@@ -367,7 +373,9 @@ export function OrderDetail({ id, onClose }: { id: number | null; onClose: () =>
                   }
                 >
                   {d.attempts.length === 0 ? (
-                    <p className="text-sm text-muted">{d.notification ? '还没发过。' : '付款后才会通知商户。'}</p>
+                    <Typography.Paragraph size="sm" color="muted">
+                      {d.notification ? '还没发过。' : '付款后才会通知商户。'}
+                    </Typography.Paragraph>
                   ) : (
                     <Events
                       items={d.attempts.map((a) => ({
@@ -381,9 +389,14 @@ export function OrderDetail({ id, onClose }: { id: number | null; onClose: () =>
                         ),
                         meta: `${time(a.created_at)} · ${a.duration_ms} 毫秒`,
                         children: (
-                          <p className="line-clamp-2 text-xs break-all" title={a.error || a.response}>
+                          <Typography.Paragraph
+                            size="xs"
+                            color="muted"
+                            className="line-clamp-2 break-all"
+                            title={a.error || a.response}
+                          >
                             {a.error || `HTTP ${a.http_status}${a.response ? `：${a.response}` : ''}`}
-                          </p>
+                          </Typography.Paragraph>
                         ),
                       }))}
                     />

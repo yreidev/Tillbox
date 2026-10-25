@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Card, Spinner } from '@yreidev/ui'
+import { Button, Card, Chip, EmptyState, ItemCard, PressableFeedback, Spinner, Typography } from '@yreidev/ui'
 import {
   ArrowUpRightFromSquare,
   Check,
@@ -19,7 +19,7 @@ import { Logo } from '../../components/brand'
 import { ApiError, api } from '../../lib/api'
 import { time } from '../../lib/format'
 import { rememberPayment, usePaymentHistory } from '../../lib/payment-history'
-import { Notice, copyText, cx } from '../../lib/ui-base'
+import { Notice, copyText, cx, enter } from '../../lib/ui-base'
 
 // 收银台：付款人看到的页面，手机优先。一张窄卡片：顶部是订单和倒计时，中间是应付金额和付款方式，
 // 最下面是唯一的主操作（扫码后点“我已付款”，或跳去付款），卡片底部是付款自助入口。
@@ -217,74 +217,96 @@ function Cashier() {
     )
   }
 
+  // 当前显示哪一块，和下面的分支一一对应；只用来在换块时重新播放淡入
+  const stage =
+    o.state === 'paid'
+      ? 'paid'
+      : o.state === 'pending' && o.pay_types && (!o.guide || choosing)
+        ? 'choose'
+        : o.state === 'pending' && o.guide
+          ? 'pay'
+          : confirming
+            ? 'confirming'
+            : 'outcome'
+
   return (
     <Shell site={o.site_name}>
-      <header className="flex items-start gap-3 border-b border-separator px-5 pt-5 pb-4 sm:px-6">
-        <div className="min-w-0 flex-1">
-          <p className="truncate font-medium" title={o.name}>
+      {/* 窄屏或字号调大时放不下，倒计时折到下一行，商品名和订单号不被挤窄 */}
+      <header className="flex flex-wrap items-start gap-x-3 gap-y-2 border-b border-separator px-5 pt-5 pb-4 sm:px-6">
+        <div className="min-w-0 flex-1 basis-40">
+          <Typography.Paragraph truncate weight="medium" className="leading-6" title={o.name}>
             {o.name}
-          </p>
-          <p className="mt-0.5 text-xs text-muted">
+          </Typography.Paragraph>
+          <Typography.Paragraph size="xs" color="muted" className="mt-0.5">
             订单号 <span className="tb-mono">{o.trade_no}</span>
-          </p>
+          </Typography.Paragraph>
         </div>
         {pending && <Timer left={left} />}
       </header>
-      {o.state === 'paid' ? (
-        <Paid order={o} />
-      ) : o.state === 'pending' && o.pay_types && (!o.guide || choosing) ? (
-        <Choose
-          order={o}
-          busy={choose.isPending ? choose.variables : undefined}
-          error={choose.isError ? choose.error.message : ''}
-          onChoose={(t) => choose.mutate(t)}
-          onCancel={o.guide ? () => setChoosing(false) : undefined}
-        />
-      ) : o.state === 'pending' && o.guide ? (
-        <Pay
-          order={o}
-          guide={o.guide}
-          claimed={claimed}
-          onPaid={() => paid.mutate()}
-          busy={paid.isPending}
-          onSwitch={o.pay_types && o.pay_types.length > 1 ? () => setChoosing(true) : undefined}
-        />
-      ) : confirming ? (
-        <Confirming claimed={claimed} onPaid={() => paid.mutate()} busy={paid.isPending} />
-      ) : (
-        <Outcome
-          icon={<CircleMinus />}
-          tone="default"
-          title={o.state === 'closed' ? '订单已关闭' : o.state === 'disputed' ? '订单待人工处理' : '订单已过期'}
-          text={
-            o.state === 'disputed'
-              ? '这笔订单的到账需要人工核对，请联系商户。'
-              : '如果你已经付了款，请不要重复付款，保留付款账单，通过下方“付款问题与自助查询”提交付款问题；没有付款的话请返回商户网站重新下单。'
-          }
-        />
-      )}
+      {/* 换状态（选方式、付款、已支付…）时整块淡入 */}
+      <div key={stage} className={enter}>
+        {o.state === 'paid' ? (
+          <Paid order={o} />
+        ) : o.state === 'pending' && o.pay_types && (!o.guide || choosing) ? (
+          <Choose
+            order={o}
+            busy={choose.isPending ? choose.variables : undefined}
+            error={choose.isError ? choose.error.message : ''}
+            onChoose={(t) => choose.mutate(t)}
+            onCancel={o.guide ? () => setChoosing(false) : undefined}
+          />
+        ) : o.state === 'pending' && o.guide ? (
+          <Pay
+            order={o}
+            guide={o.guide}
+            claimed={claimed}
+            onPaid={() => paid.mutate()}
+            busy={paid.isPending}
+            onSwitch={o.pay_types && o.pay_types.length > 1 ? () => setChoosing(true) : undefined}
+          />
+        ) : confirming ? (
+          <Confirming claimed={claimed} onPaid={() => paid.mutate()} busy={paid.isPending} />
+        ) : (
+          <Outcome
+            icon={<CircleMinus />}
+            tone="default"
+            title={o.state === 'closed' ? '订单已关闭' : o.state === 'disputed' ? '订单待人工处理' : '订单已过期'}
+            text={
+              o.state === 'disputed'
+                ? '这笔订单的到账需要人工核对，请联系商户。'
+                : '如果你已经付了款，请不要重复付款，保留付款账单，通过下方“付款问题与自助查询”提交付款问题；没有付款的话请返回商户网站重新下单。'
+            }
+          />
+        )}
+      </div>
       {paid.isError && (
         <div className="px-5 pb-5 sm:px-6">
           <Notice status="danger">{paid.error.message}，请稍后重试。</Notice>
         </div>
       )}
-      <a
+      <ItemCard<'a'>
+        variant="secondary"
         href={`/help?trade_no=${o.trade_no}`}
-        className="flex items-center gap-3 border-t border-separator bg-surface-secondary/50 px-5 py-4 transition-colors outline-none hover:bg-surface-secondary focus-visible:bg-surface-secondary sm:px-6"
+        className="relative overflow-hidden rounded-none border-t border-separator bg-surface-secondary/50 px-5 py-4 outline-none focus-visible:bg-surface-secondary sm:px-6"
+        render={(props) => <a {...props} />}
       >
-        <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-default text-muted">
-          <CircleQuestion className="size-4" />
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="block text-sm font-medium">付款问题与自助查询</span>
-          <span className="mt-0.5 block text-xs text-muted">
+        <PressableFeedback.Highlight />
+        <ItemCard.Icon className="text-muted">
+          <CircleQuestion />
+        </ItemCard.Icon>
+        <ItemCard.Content>
+          {/* 字号调大、屏幕又窄时标题和说明都要能折行，不用组件默认的单行省略 */}
+          <ItemCard.Title className="whitespace-normal">付款问题与自助查询</ItemCard.Title>
+          <ItemCard.Description className="whitespace-normal">
             {historySaved
               ? '订单已保存在此浏览器，关闭后可到付款自助页查看最近支付。'
               : '请保存订单号或收藏此页，供后续查询。'}
-          </span>
-        </span>
-        <ChevronRight className="size-4 shrink-0 text-muted" />
-      </a>
+          </ItemCard.Description>
+        </ItemCard.Content>
+        <ItemCard.Action className="ps-0">
+          <ChevronRight className="size-4 text-muted" />
+        </ItemCard.Action>
+      </ItemCard>
     </Shell>
   )
 }
@@ -298,10 +320,14 @@ function Shell({ site, children }: { site?: string; children: ReactNode }) {
           <span className="truncate text-base font-semibold">{site || '收银台'}</span>
         </div>
         <Card className="gap-0 overflow-hidden p-0">{children}</Card>
-        <p className="flex items-start justify-center gap-1.5 px-3 text-xs leading-relaxed text-muted">
+        <Typography.Paragraph
+          size="xs"
+          color="muted"
+          className="flex items-start justify-center gap-1.5 px-3 leading-relaxed"
+        >
           <ShieldCheck className="mt-0.5 size-3.5 shrink-0" />
           <span>确认收款方与应付金额后再付款。请勿向陌生人转账，遇到问题可使用付款自助服务。</span>
-        </p>
+        </Typography.Paragraph>
       </main>
     </div>
   )
@@ -310,17 +336,18 @@ function Shell({ site, children }: { site?: string; children: ReactNode }) {
 function Timer({ left }: { left: number }) {
   const urgent = left <= 60
   return (
-    <span
+    <Chip
       role="timer"
       aria-label={`剩余支付时间 ${countdown(left)}`}
-      className={cx(
-        'inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium',
-        urgent ? 'bg-danger-soft text-danger-soft-foreground' : 'bg-default text-muted',
-      )}
+      variant="soft"
+      color={urgent ? 'danger' : 'default'}
+      className={cx('shrink-0 rounded-full px-2.5 py-1', !urgent && 'text-muted')}
     >
       <Clock className="size-3.5" />
-      剩余 <span className="tb-num">{countdown(left)}</span>
-    </span>
+      <Chip.Label>
+        剩余 <span className="tb-num">{countdown(left)}</span>
+      </Chip.Label>
+    </Chip>
   )
 }
 
@@ -339,15 +366,7 @@ function Amount({ label, value, children }: { label: string; value: string; chil
 }
 
 function Waiting({ text }: { text: string }) {
-  return (
-    <div
-      role="status"
-      className="flex items-center justify-center gap-2.5 rounded-2xl bg-accent-soft px-4 py-3 text-sm text-accent-soft-foreground"
-    >
-      <Spinner size="sm" color="current" />
-      {text}
-    </div>
-  )
+  return <Notice role="status" status="accent" icon={<Spinner size="sm" color="current" />} title={text} />
 }
 
 const outcomeTone = {
@@ -372,14 +391,19 @@ function Outcome({
   children?: ReactNode
 }) {
   return (
-    <div className="flex flex-col items-center px-5 py-9 text-center sm:px-6">
-      <span className={cx('grid size-16 place-items-center rounded-full [&>svg]:size-8', outcomeTone[tone])}>
-        {icon}
-      </span>
-      <h1 className="mt-4 text-xl font-semibold">{title}</h1>
-      {text && <p className="mt-2 max-w-80 text-sm leading-relaxed text-muted">{text}</p>}
-      {children && <div className="mt-6 flex w-full flex-col items-center gap-2">{children}</div>}
-    </div>
+    <EmptyState size="lg" className="gap-6 px-5 py-9 sm:px-6">
+      <EmptyState.Header className="gap-0">
+        <EmptyState.Media variant="icon" className={cx('size-16 [&>svg]:size-8', outcomeTone[tone])}>
+          {icon}
+        </EmptyState.Media>
+        {/* 结果页的标题就是整页的标题，用 h1 */}
+        <Typography.Heading level={1} align="center" className="mt-4 text-xl">
+          {title}
+        </Typography.Heading>
+        {text && <EmptyState.Description className="mt-2 max-w-80 leading-relaxed">{text}</EmptyState.Description>}
+      </EmptyState.Header>
+      {children && <EmptyState.Content className="w-full">{children}</EmptyState.Content>}
+    </EmptyState>
   )
 }
 
@@ -401,7 +425,9 @@ function Choose({
     <div className="flex flex-col gap-6 px-5 py-6 sm:px-6">
       <Amount label="应付金额" value={order.pay_amount} />
       <div className="flex flex-col gap-2">
-        <p className="text-sm font-medium">选择支付方式</p>
+        <Typography.Paragraph size="sm" className="font-medium">
+          选择支付方式
+        </Typography.Paragraph>
         {(order.pay_types ?? []).map((t) => {
           const current = t.type === order.pay_type
           return (
@@ -540,9 +566,9 @@ function Pay({
         </figure>
       )}
       {inApp && guide.payee_name && (
-        <p className="text-center text-sm text-muted">
+        <Typography.Paragraph size="sm" color="muted" align="center">
           收款方：<span className="font-medium text-foreground">{guide.payee_name}</span>
-        </p>
+        </Typography.Paragraph>
       )}
       {(openQR || (png && isMobile)) && (
         <div className="flex flex-col gap-2">
@@ -552,13 +578,15 @@ function Pay({
             </Button>
           )}
           {inApp ? (
-            <p className="text-center text-xs text-muted">付款完成后回到这个页面，等待到账确认。</p>
+            <Typography.Paragraph size="xs" color="muted" align="center">
+              付款完成后回到这个页面，等待到账确认。
+            </Typography.Paragraph>
           ) : (
             png &&
             isMobile && (
-              <p className="text-center text-xs text-muted">
+              <Typography.Paragraph size="xs" color="muted" align="center">
                 也可以长按二维码保存到相册，在{app}“扫一扫”里从相册选择。
-              </p>
+              </Typography.Paragraph>
             )
           )}
         </div>
@@ -578,7 +606,9 @@ function Pay({
             </Button>
           )}
           {goError && <Notice status="danger">{goError}</Notice>}
-          <p className="text-center text-xs text-muted">付款完成后回到这个页面，等待到账确认。</p>
+          <Typography.Paragraph size="xs" color="muted" align="center">
+            付款完成后回到这个页面，等待到账确认。
+          </Typography.Paragraph>
         </div>
       )}
       <div className="flex flex-col gap-2 border-t border-separator pt-5">
@@ -664,18 +694,18 @@ function Paid({ order }: { order: CashierOrder }) {
       }
     >
       {order.paid_at > 0 && (
-        <p className="-mt-3 mb-2 text-xs text-muted">
+        <Typography.Paragraph size="xs" color="muted" align="center" className="-mt-3 mb-2">
           到账时间 <span className="tb-num">{time(order.paid_at)}</span>
-        </p>
+        </Typography.Paragraph>
       )}
       {url && (
         <>
           <Button fullWidth size="lg" onPress={() => window.location.assign(url)}>
             返回商户
           </Button>
-          <p className="text-xs text-muted" aria-live="polite">
+          <Typography.Paragraph size="xs" color="muted" align="center" aria-live="polite">
             {left > 0 ? `${left} 秒后自动返回` : '正在返回…'}
-          </p>
+          </Typography.Paragraph>
         </>
       )}
     </Outcome>

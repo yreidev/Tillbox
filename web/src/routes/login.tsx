@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
-import { Button, Card, Form } from '@yreidev/ui'
+import { Button, Card, Form, Typography } from '@yreidev/ui'
 import { Logo, siteName } from '../components/brand'
 import { api } from '../lib/api'
 import { Notice } from '../lib/ui-base'
@@ -73,7 +73,9 @@ function Login() {
               登录
             </Button>
           </Form>
-          <p className="text-xs text-muted">忘记密码？请联系站点维护人员恢复访问。</p>
+          <Typography.Paragraph size="xs" color="muted">
+            忘记密码？请联系站点维护人员恢复访问。
+          </Typography.Paragraph>
         </Card.Content>
       </Card>
     </main>

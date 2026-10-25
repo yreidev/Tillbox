@@ -1,7 +1,7 @@
 import { useId, useState } from 'react'
 import { createFileRoute } from '@tanstack/react-router'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Drawer, Form } from '@yreidev/ui'
+import { Button, Card, Drawer, Form, Surface, Typography } from '@yreidev/ui'
 import { ArrowUpRightFromSquare, CircleCheck, FaceRobot, Gear, PlugConnection } from '@gravity-ui/icons'
 import { api } from '../../lib/api'
 import { relative, time, yuan } from '../../lib/format'
@@ -12,6 +12,7 @@ import {
   Empty,
   FilterTabs,
   Mono,
+  ConflictNotice,
   Notice,
   NumberInput,
   PageHeader,
@@ -26,8 +27,10 @@ import {
   TextInput,
   Events,
   cx,
+  enter,
   toastError,
   toastOK,
+  useRevision,
   type Tone,
 } from '../../lib/ui'
 import { OrderDetail } from '../../components/order-detail'
@@ -72,6 +75,8 @@ interface Action {
 interface Overview {
   config: Config
   has_api_key: boolean
+  /** AI 设置的版本，保存时放进 If-Match */
+  revision: number
   state: { last_run_at: number; last_ok_at: number; last_error: string; processed: number }
   items: Case[]
   total: number
@@ -231,7 +236,9 @@ function AssistancePage() {
                 <span className="text-xs text-muted">
                   #{c.id} · {sources[c.source] || c.source} · <span className="tb-num">{relative(c.updated_at)}</span>
                 </span>
-                <p className="line-clamp-2 text-sm text-muted">{c.summary || '等待核查'}</p>
+                <Typography.Paragraph size="sm" color="muted" className="line-clamp-2">
+                  {c.summary || '等待核查'}
+                </Typography.Paragraph>
               </div>
             )}
             columns={[
@@ -294,6 +301,7 @@ function AssistancePage() {
         onClose={() => setConfig(false)}
         config={d.config}
         hasKey={d.has_api_key}
+        revision={d.revision}
         saved={refresh}
         testing={run.isPending && run.variables === 'test'}
         onTest={() => run.mutate('test')}
@@ -336,19 +344,23 @@ function AIStatus({
                 {!c.enabled ? '未启用' : s.last_error ? '上次巡检出错' : '运行中'}
               </StatusDot>
             </div>
-            <p className="mt-0.5 text-sm text-muted">
+            <Typography.Paragraph size="sm" color="muted" className="mt-0.5">
               {c.enabled
                 ? `${c.model || '未填模型'} · 每 ${c.interval_seconds} 秒巡检 · 允许${allowed.length ? allowed.join('、') : '只读核查'}`
                 : '未启用时付款人仍能自助查单、提交申诉，由你在这里处理。'}
-            </p>
+            </Typography.Paragraph>
             {c.enabled && (
-              <p className="tb-num mt-0.5 text-xs text-muted">
+              <Typography.Paragraph size="xs" color="muted" className="tb-num mt-0.5">
                 {s.last_ok_at
                   ? `${relative(s.last_ok_at)}巡检成功，处理了 ${s.processed || 0} 项（每轮最多 5 项）`
                   : '还没巡检过'}
-              </p>
+              </Typography.Paragraph>
             )}
-            {s.last_error && <p className="mt-1 text-xs text-warning">{s.last_error}</p>}
+            {s.last_error && (
+              <Typography.Paragraph size="xs" className="mt-1 text-warning">
+                {s.last_error}
+              </Typography.Paragraph>
+            )}
           </div>
         </div>
         <div className="flex shrink-0 gap-2">
@@ -415,10 +427,10 @@ function CaseSheet({
         <Drawer.Dialog className="w-[min(600px,100vw)] max-w-[100vw] p-0 sm:w-[min(600px,100vw)]">
           <Drawer.CloseTrigger />
           <Drawer.Header className="gap-2 border-b border-separator px-5 pt-5 pb-4 sm:px-6">
-            <p className="text-sm text-muted">
+            <Typography.Paragraph size="sm" color="muted">
               处理记录 #{id}
               {c && ` · ${sources[c.source] || c.source}`}
-            </p>
+            </Typography.Paragraph>
             <Drawer.Heading className="pr-10 text-lg font-semibold">
               {c ? kinds[c.kind] || c.kind : '加载中…'}
             </Drawer.Heading>
@@ -439,7 +451,7 @@ function CaseSheet({
               <>
                 {c.summary && (
                   <Section title="AI 核查结论">
-                    <p className="text-sm">{c.summary}</p>
+                    <Typography.Paragraph size="sm">{c.summary}</Typography.Paragraph>
                   </Section>
                 )}
                 {(c.payment_ref || c.message || c.contact) && (
@@ -471,9 +483,13 @@ function CaseSheet({
                     )
                   }
                 >
-                  <blockquote className="rounded-xl border-l-2 border-accent bg-default/60 px-3 py-2.5 text-sm [overflow-wrap:anywhere]">
+                  <Surface<'blockquote'>
+                    variant="secondary"
+                    className="rounded-xl border-l-2 border-accent px-3 py-2.5 text-sm [overflow-wrap:anywhere]"
+                    render={(props) => <blockquote {...props} />}
+                  >
                     {c.public_reply || '—'}
-                  </blockquote>
+                  </Surface>
                 </Section>
                 {c.status !== 'resolved' && (
                   <Section title="人工处理">
@@ -491,12 +507,17 @@ function CaseSheet({
                       rows={3}
                     />
                     {c.source === 'payer' && c.order_id === 0 && (
-                      <div className="flex flex-col gap-3 rounded-2xl border border-separator p-4">
+                      <Card
+                        variant="transparent"
+                        className={cx('rounded-2xl border border-solid border-separator', enter)}
+                      >
                         <div>
-                          <h4 className="text-sm font-medium">找回平台订单</h4>
-                          <p className="mt-0.5 text-xs text-muted">
+                          <Typography.Heading level={4} className="text-sm font-medium">
+                            找回平台订单
+                          </Typography.Heading>
+                          <Typography.Paragraph size="xs" color="muted" className="mt-0.5">
                             核对支付宝交易号、金额、时间和原业务站后，填写确认的订单号。只关联申诉，不确认到账；核对依据写在上面的处理说明里。
-                          </p>
+                          </Typography.Paragraph>
                         </div>
                         <div className="flex flex-wrap items-start gap-2">
                           <TextInput
@@ -518,11 +539,11 @@ function CaseSheet({
                             关联申诉订单
                           </Button>
                         </div>
-                      </div>
+                      </Card>
                     )}
-                    <p className="text-xs text-muted">
+                    <Typography.Paragraph size="xs" color="muted">
                       标为已处理不会改到账状态；要人工补认时，到「流水与异常」核实并关联。
-                    </p>
+                    </Typography.Paragraph>
                   </Section>
                 )}
                 {actions.length > 0 && (
@@ -535,8 +556,12 @@ function CaseSheet({
                         meta: time(a.created_at),
                         children: (
                           <>
-                            {a.reason && <p className="text-foreground">{a.reason}</p>}
-                            {a.result && <p className="mt-0.5 text-xs">{a.result}</p>}
+                            {a.reason && <Typography.Paragraph size="sm">{a.reason}</Typography.Paragraph>}
+                            {a.result && (
+                              <Typography.Paragraph size="xs" color="muted" className="mt-0.5">
+                                {a.result}
+                              </Typography.Paragraph>
+                            )}
                           </>
                         ),
                       }))}
@@ -575,6 +600,7 @@ function ConfigSheet({
   onClose,
   config,
   hasKey,
+  revision,
   saved,
   testing,
   onTest,
@@ -583,6 +609,7 @@ function ConfigSheet({
   onClose: () => void
   config: Config
   hasKey: boolean
+  revision: number
   saved: () => Promise<void>
   testing: boolean
   onTest: () => void
@@ -593,10 +620,21 @@ function ConfigSheet({
         <Drawer.Dialog className="w-[min(560px,100vw)] max-w-[100vw] p-0 sm:w-[min(560px,100vw)]">
           <Drawer.CloseTrigger />
           <Drawer.Header className="gap-0.5 border-b border-separator px-5 pt-5 pb-4 sm:px-6">
-            <p className="text-sm text-muted">设置</p>
+            <Typography.Paragraph size="sm" color="muted">
+              设置
+            </Typography.Paragraph>
             <Drawer.Heading className="pr-10 text-lg font-semibold">AI 自动处理</Drawer.Heading>
           </Drawer.Header>
-          {open && <ConfigForm config={config} hasKey={hasKey} saved={saved} testing={testing} onTest={onTest} />}
+          {open && (
+            <ConfigForm
+              config={config}
+              hasKey={hasKey}
+              revision={revision}
+              saved={saved}
+              testing={testing}
+              onTest={onTest}
+            />
+          )}
         </Drawer.Dialog>
       </Drawer.Content>
     </Drawer.Backdrop>
@@ -606,12 +644,14 @@ function ConfigSheet({
 function ConfigForm({
   config,
   hasKey,
+  revision,
   saved,
   testing,
   onTest,
 }: {
   config: Config
   hasKey: boolean
+  revision: number
   saved: () => Promise<void>
   testing: boolean
   onTest: () => void
@@ -619,27 +659,47 @@ function ConfigForm({
   const formId = useId()
   const [v, setV] = useState<ConfigValues>(() => ({ ...config, api_key: '', clear_key: false }))
   const set = <K extends keyof ConfigValues>(k: K, x: ConfigValues[K]) => setV((s) => ({ ...s, [k]: x }))
+  const dirty =
+    v.api_key !== '' || v.clear_key || (Object.keys(config) as (keyof Config)[]).some((k) => v[k] !== config[k])
+  const rev = useRevision(revision, !dirty)
   const save = useMutation({
-    mutationFn: () =>
-      api.put('/web-api/admin/assistance/config', {
-        enabled: v.enabled,
-        base_url: v.base_url,
-        model: v.model,
-        auto_recheck: v.auto_recheck,
-        auto_notify: v.auto_notify,
-        auto_link: v.auto_link,
-        interval_seconds: Number(v.interval_seconds),
-        max_attempts: Number(v.max_attempts),
-        api_key: v.api_key,
-        clear_key: v.clear_key,
-      }),
-    onSuccess: async () => {
+    mutationFn: (overwrite: boolean) =>
+      rev.run(
+        async (revision) =>
+          (
+            await api.put<{ revision: number }>(
+              '/web-api/admin/assistance/config',
+              {
+                enabled: v.enabled,
+                base_url: v.base_url,
+                model: v.model,
+                auto_recheck: v.auto_recheck,
+                auto_notify: v.auto_notify,
+                auto_link: v.auto_link,
+                interval_seconds: Number(v.interval_seconds),
+                max_attempts: Number(v.max_attempts),
+                api_key: v.api_key,
+                clear_key: v.clear_key,
+              },
+              { revision },
+            )
+          ).revision,
+        overwrite,
+      ),
+    onSuccess: async (ok) => {
+      if (!ok) return
       setV((s) => ({ ...s, api_key: '', clear_key: false }))
       await saved()
       toastOK('自动处理配置已保存')
     },
     onError: toastError,
   })
+  // 载入最新：把表单换成服务器上的设置，再刷新列表让 config 和 revision 跟上。
+  const reload = async () => {
+    const l = await api.get<Overview>('/web-api/admin/assistance?page=1')
+    setV({ ...l.config, api_key: '', clear_key: false })
+    await saved()
+  }
   return (
     <>
       <Drawer.Body className="px-5 py-5 sm:px-6">
@@ -648,7 +708,7 @@ function ConfigForm({
           className="flex flex-col gap-7"
           onSubmit={(e) => {
             e.preventDefault()
-            save.mutate()
+            save.mutate(false)
           }}
         >
           <SwitchInput
@@ -723,9 +783,14 @@ function ConfigForm({
               />
             </div>
           </Section>
-          <p className="rounded-xl bg-default/60 px-3 py-2.5 text-xs text-muted">
-            会向模型发送必要的订单状态、金额、时间和付款说明；不发送支付密钥、联系方式和完整流水原文。请使用可信的模型服务。
-          </p>
+          <Surface variant="secondary" className="rounded-xl px-3 py-2.5">
+            <Typography.Paragraph size="xs" color="muted">
+              会向模型发送必要的订单状态、金额、时间和付款说明；不发送支付密钥、联系方式和完整流水原文。请使用可信的模型服务。
+            </Typography.Paragraph>
+          </Surface>
+          {rev.conflict && (
+            <ConflictNotice what="AI 自动处理设置" onReload={reload} onOverwrite={() => save.mutateAsync(true)} />
+          )}
         </Form>
       </Drawer.Body>
       <Drawer.Footer className="flex-wrap justify-start gap-2 border-t border-separator px-5 py-4 sm:px-6">

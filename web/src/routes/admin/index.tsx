@@ -1,7 +1,7 @@
-import { useState, type ComponentType, type ReactNode, type SVGProps } from 'react'
-import { Link, createFileRoute } from '@tanstack/react-router'
+import { useMemo, useState, type ComponentType, type ReactNode, type SVGProps } from 'react'
+import { createFileRoute } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { BarChart, KPI, Label, ListView, Meter, Segment } from '@yreidev/ui'
+import { BarChart, KPI, Label, ListView, Meter, Segment, Typography } from '@yreidev/ui'
 import {
   Bell,
   ChevronRight,
@@ -16,7 +16,7 @@ import { LedgerRow } from '../../components/ledger-status'
 import { casesCountQuery, channelsQuery, overviewQuery } from '../../lib/api'
 import { yuan } from '../../lib/format'
 import type { Day, Overview } from '../../lib/types'
-import { Notice, PageHeader, PageSkeleton, Panel, linkClass, type Tone } from '../../lib/ui'
+import { DataTable, Notice, PageHeader, PageSkeleton, Panel, Pill, RouterLink, type Tone } from '../../lib/ui'
 
 export const Route = createFileRoute('/admin/')({
   component: OverviewPage,
@@ -36,6 +36,7 @@ interface Todo {
 
 function OverviewPage() {
   const [days, setDays] = useState<'7' | '30'>('7')
+  const [page, setPage] = useState(1)
   const q = useQuery({ ...overviewQuery(Number(days)), refetchInterval: 15_000 })
   const cases = useQuery({ ...casesCountQuery, refetchInterval: 30_000 })
   const channels = useQuery(channelsQuery).data?.items ?? []
@@ -100,9 +101,9 @@ function OverviewPage() {
           {total.count} 笔 · 日均 {yuan(Math.round(total.amount / o.days.length))} 元
         </Kpi>
         <Kpi label="等待付款" icon={<Clock />} count={o.pending_orders}>
-          <Link className={linkClass} to="/admin/orders" search={{ state: 'pending' }}>
+          <RouterLink to="/admin/orders" search={{ state: 'pending' }}>
             查看待支付订单
-          </Link>
+          </RouterLink>
         </Kpi>
         <Kpi label="通知重试中" icon={<Bell />} count={o.retrying_notifications}>
           商户暂时没确认，会按计划自动重发
@@ -142,7 +143,10 @@ function OverviewPage() {
               aria-label="统计天数"
               size="sm"
               selectedKey={days}
-              onSelectionChange={(k) => setDays(k === '30' ? '30' : '7')}
+              onSelectionChange={(k) => {
+                setDays(k === '30' ? '30' : '7')
+                setPage(1)
+              }}
             >
               <Segment.Item id="7">7 天</Segment.Item>
               <Segment.Item id="30">30 天</Segment.Item>
@@ -151,10 +155,10 @@ function OverviewPage() {
         >
           <TrendChart days={o.days} />
           {top && top.amount > 0 && (
-            <p className="mt-3 text-xs text-muted">
+            <Typography.Paragraph size="xs" color="muted" className="mt-3">
               最高的一天是 <span className="tb-num">{top.date}</span>，<span className="tb-num">{top.count}</span> 笔，
               <span className="tb-num">{yuan(top.amount)}</span> 元。
-            </p>
+            </Typography.Paragraph>
           )}
         </Panel>
         <Panel title="查账" description="支付宝经营码按账单确认到账">
@@ -165,16 +169,17 @@ function OverviewPage() {
               ))}
             </div>
           ) : (
-            <p className="text-sm text-muted">
+            <Typography.Paragraph size="sm" color="muted">
               没有启用的经营码渠道。上游易支付渠道的查单和回调情况在{' '}
-              <Link className={linkClass} to="/admin/channels">
-                支付渠道
-              </Link>{' '}
-              页查看。
-            </p>
+              <RouterLink to="/admin/channels">支付渠道</RouterLink> 页查看。
+            </Typography.Paragraph>
           )}
         </Panel>
       </div>
+
+      <Panel title="每日明细" description={`近 ${days} 天每天的已支付订单，最近的在前`}>
+        <DailyTable days={o.days} today={o.today.date} top={top} page={page} onPage={setPage} />
+      </Panel>
 
       <Panel title="按商户" description={`近 ${days} 天各商户的已支付金额`}>
         <MerchantShare merchants={o.merchants} />
@@ -233,21 +238,18 @@ function shortYuan(cents: number) {
 
 // TrendChart 是每日收款的柱状图，悬停看当天笔数和金额。
 function TrendChart({ days }: { days: Day[] }) {
-  const data = days.map((d) => ({ date: d.date, label: d.date.slice(5), amount: d.amount, count: d.count }))
+  // 自动刷新拿到一样的数据时 days 还是同一个数组（React Query 的结构共享），图表不重播进场动画
+  const data = useMemo(
+    () => days.map((d) => ({ date: d.date, label: d.date.slice(5), amount: d.amount, count: d.count })),
+    [days],
+  )
   return (
     <div role="img" aria-label={`每日收款金额，共 ${days.length} 天`}>
       <BarChart data={data} height={200}>
         <BarChart.Grid vertical={false} strokeDasharray="3 3" />
         <BarChart.XAxis dataKey="label" tickMargin={8} minTickGap={8} />
         <BarChart.YAxis width={48} tickFormatter={(v: number) => shortYuan(v)} />
-        <BarChart.Bar
-          dataKey="amount"
-          name="收款"
-          fill="var(--accent)"
-          maxBarSize={36}
-          radius={[6, 6, 0, 0]}
-          isAnimationActive={false}
-        />
+        <BarChart.Bar dataKey="amount" name="收款" fill="var(--accent)" maxBarSize={36} radius={[6, 6, 0, 0]} />
         <BarChart.Tooltip
           cursor={{ fill: 'var(--default)' }}
           content={
@@ -265,9 +267,78 @@ function TrendChart({ days }: { days: Day[] }) {
   )
 }
 
+const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+const dailyPageSize = 10
+
+// DailyTable 是每日收款明细：日期、笔数、金额、笔均，最近的在前，标出今天和最高的一天。
+function DailyTable({
+  days,
+  today,
+  top,
+  page,
+  onPage,
+}: {
+  days: Day[]
+  today: string
+  top: Day | null
+  page: number
+  onPage: (page: number) => void
+}) {
+  const rows = [...days].reverse().slice((page - 1) * dailyPageSize, page * dailyPageSize)
+  const avg = (d: Day) => (d.count ? `${yuan(Math.round(d.amount / d.count))} 元` : '—')
+  const date = (d: Day) => (
+    <span className="flex flex-wrap items-center gap-1.5">
+      <span className="tb-num">{d.date}</span>
+      <span className="text-xs text-muted">{weekdays[new Date(`${d.date}T00:00:00Z`).getUTCDay()]}</span>
+      {d.date === today && <Pill tone="accent">今天</Pill>}
+      {top && top.amount > 0 && d.date === top.date && <Pill tone="success">最高</Pill>}
+    </span>
+  )
+  return (
+    <DataTable
+      label="每日收款明细"
+      rows={rows}
+      rowKey={(d) => d.date}
+      columns={[
+        { title: '日期', render: date, nowrap: true },
+        { title: '笔数', align: 'right', render: (d) => <span className="tb-num">{d.count}</span> },
+        {
+          title: '收款金额',
+          align: 'right',
+          nowrap: true,
+          render: (d) => <span className="tb-num">{yuan(d.amount)} 元</span>,
+        },
+        {
+          title: '笔均',
+          align: 'right',
+          nowrap: true,
+          render: (d) => <span className="tb-num text-muted">{avg(d)}</span>,
+        },
+      ]}
+      card={(d) => (
+        <div className="flex items-center justify-between gap-3">
+          {date(d)}
+          <span className="flex flex-col items-end">
+            <span className="tb-num whitespace-nowrap">{yuan(d.amount)} 元</span>
+            <span className="tb-num text-xs whitespace-nowrap text-muted">
+              {d.count} 笔{d.count ? ` · 笔均 ${avg(d)}` : ''}
+            </span>
+          </span>
+        </div>
+      )}
+      pagination={{ page, pageSize: dailyPageSize, total: days.length, onChange: onPage }}
+    />
+  )
+}
+
 // MerchantShare 用横条显示各商户收款占比，金额从高到低。
 function MerchantShare({ merchants }: { merchants: Overview['merchants'] }) {
-  if (merchants.length === 0) return <p className="text-sm text-muted">这段时间还没有收款。</p>
+  if (merchants.length === 0)
+    return (
+      <Typography.Paragraph size="sm" color="muted">
+        这段时间还没有收款。
+      </Typography.Paragraph>
+    )
   const sorted = [...merchants].sort((a, b) => b.amount - a.amount)
   const sum = sorted.reduce((s, m) => s + m.amount, 0) || 1
   return (

@@ -1,7 +1,7 @@
 import { useState, type CSSProperties } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Card, ProgressBar, Stepper, Tooltip } from '@yreidev/ui'
+import { Button, Card, ProgressBar, Stepper, Tooltip, Typography } from '@yreidev/ui'
 import { ArrowRotateRight, Xmark } from '@gravity-ui/icons'
 import { OrderDetail } from '../../components/order-detail'
 import { api, overviewQuery, query } from '../../lib/api'
@@ -140,7 +140,9 @@ function NotificationsPage() {
               </div>
               <Attempts n={n} />
               {n.last_error && n.status !== 'success' && (
-                <p className="line-clamp-2 text-xs break-all text-danger">{n.last_error}</p>
+                <Typography.Paragraph size="xs" className="line-clamp-2 break-all text-danger">
+                  {n.last_error}
+                </Typography.Paragraph>
               )}
               <div className="flex items-center justify-between gap-3">
                 <span className="min-w-0 truncate text-xs text-muted">{statusLine(n)}</span>

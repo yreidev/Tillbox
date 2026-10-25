@@ -1,7 +1,7 @@
 import { useId, useState } from 'react'
-import { Link, createFileRoute } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Card, Description, Drawer, Dropdown, Form, Label, Separator } from '@yreidev/ui'
+import { Button, Card, Description, Drawer, Dropdown, Form, Label, Separator, Surface, Typography } from '@yreidev/ui'
 import {
   ArrowRotateRight,
   Briefcase,
@@ -13,12 +13,13 @@ import {
   Plus,
   TrashBin,
 } from '@gravity-ui/icons'
-import { api, channelsQuery, meQuery } from '../../lib/api'
+import { ApiError, api, channelsQuery, meQuery } from '../../lib/api'
 import { time } from '../../lib/format'
 import type { ChannelView, Merchant, MerchantInput, Settings } from '../../lib/types'
 import { channelTypeText, payTypeLabel } from '../../lib/types'
 import {
   ConfirmDialog,
+  ConflictNotice,
   Copyable,
   DataTable,
   Desc,
@@ -34,10 +35,10 @@ import {
   SwitchInput,
   TextAreaInput,
   TextInput,
-  cx,
-  linkClass,
+  RouterLink,
   toastError,
   toastOK,
+  useRevision,
 } from '../../lib/ui'
 
 // 有订单的商户只能停用（后端 merchant.Service.Delete 同样拦）。
@@ -48,6 +49,8 @@ export const Route = createFileRoute('/admin/merchants')({
 })
 
 type Row = { merchant: Merchant; orders: number }
+
+const merchantsQuery = { queryKey: ['merchants'], queryFn: () => api.get<{ items: Row[] }>('/web-api/admin/merchants') }
 type Secret = { merchant: Merchant; key: string; created: boolean }
 type Pending = { kind: 'reset' | 'delete'; merchant: Merchant } | null
 
@@ -73,7 +76,7 @@ const inputOf = (m: Merchant): MerchantInput => ({
 
 function MerchantsPage() {
   const qc = useQueryClient()
-  const q = useQuery({ queryKey: ['merchants'], queryFn: () => api.get<{ items: Row[] }>('/web-api/admin/merchants') })
+  const q = useQuery(merchantsQuery)
   const apiURL = useQuery(meQuery).data?.api_url ?? ''
   const ch = useQuery(channelsQuery)
   const channels = ch.data?.items ?? []
@@ -91,12 +94,19 @@ function MerchantsPage() {
     onError: toastError,
   })
   const toggle = useMutation({
-    mutationFn: (m: Merchant) => api.put(`/web-api/admin/merchants/${m.id}`, { ...inputOf(m), enabled: !m.enabled }),
+    // 带上列表里的修改时间：列表没刷新到别处的修改时不会把它改回去。
+    mutationFn: (m: Merchant) =>
+      api.put(`/web-api/admin/merchants/${m.id}`, { ...inputOf(m), enabled: !m.enabled }, { revision: m.updated_at }),
     onSuccess: (_d, m) => {
       toastOK(m.enabled ? '已停用，这个商户下不了新单' : '已启用')
       void refresh()
     },
-    onError: toastError,
+    onError: (e) => {
+      if (e instanceof ApiError && e.status === 409) {
+        toastError(new Error('这个商户刚在别处改过，已刷新，请看一下再点'))
+        void refresh()
+      } else toastError(e)
+    },
   })
   const rows = q.data?.items ?? []
   const channelOf = (m: Merchant) => channels.find((c) => c.id === m.channel_id)
@@ -146,11 +156,7 @@ function MerchantsPage() {
       />
       {ch.isSuccess && channels.length === 0 && (
         <Notice status="warning" title="还没有支付渠道">
-          商户要选一个渠道才能收款，先到{' '}
-          <Link to="/admin/channels" className={linkClass}>
-            支付渠道
-          </Link>{' '}
-          页新建。
+          商户要选一个渠道才能收款，先到 <RouterLink to="/admin/channels">支付渠道</RouterLink> 页新建。
         </Notice>
       )}
       {q.isError && <Notice status="danger">{q.error.message}</Notice>}
@@ -250,9 +256,9 @@ function MerchantsPage() {
               nowrap: true,
               render: (r) =>
                 r.orders ? (
-                  <Link to="/admin/orders" search={{ merchant_id: r.merchant.id }} className={cx(linkClass, 'tb-num')}>
+                  <RouterLink to="/admin/orders" search={{ merchant_id: r.merchant.id }} className="tb-num">
                     {r.orders}
-                  </Link>
+                  </RouterLink>
                 ) : (
                   <span className="tb-num text-muted">0</span>
                 ),
@@ -267,12 +273,16 @@ function MerchantsPage() {
         />
       )}
       {rows.length > 0 && apiURL && (
-        <p className="text-xs text-muted">
+        <Typography.Paragraph size="xs" color="muted">
           所有商户共用一个接口地址 <Copyable text={apiURL} mono />
-        </p>
+        </Typography.Paragraph>
       )}
       <Editor
-        editing={editing}
+        editing={
+          editing === 'new' || !editing
+            ? editing
+            : (rows.find((r) => r.merchant.id === editing.id)?.merchant ?? editing)
+        }
         channels={channels}
         onClose={() => setEditing(null)}
         onCreated={(m, key) => {
@@ -292,9 +302,13 @@ function MerchantsPage() {
           const r = await api.post<{ key: string }>(`/web-api/admin/merchants/${m.id}/reset-key`)
           toastOK('已生成新密钥，旧密钥立即失效')
           setSecret({ merchant: m, key: r.key, created: false })
+          // 重置密钥也改了修改时间，刷新列表，之后编辑才不会误报冲突。
+          void refresh()
         }}
       >
-        <p>旧密钥立即失效，对方网站要同步改成新密钥，否则下单和验签都会失败。</p>
+        <Typography.Paragraph size="sm" color="muted">
+          旧密钥立即失效，对方网站要同步改成新密钥，否则下单和验签都会失败。
+        </Typography.Paragraph>
       </ConfirmDialog>
       <ConfirmDialog
         open={pending?.kind === 'delete'}
@@ -307,7 +321,9 @@ function MerchantsPage() {
           void refresh()
         }}
       >
-        <p>删除后不能恢复，对方网站用这个商户号下单会失败。</p>
+        <Typography.Paragraph size="sm" color="muted">
+          删除后不能恢复，对方网站用这个商户号下单会失败。
+        </Typography.Paragraph>
       </ConfirmDialog>
     </div>
   )
@@ -400,9 +416,9 @@ function Editor({
         <Drawer.Dialog className="w-[min(560px,100vw)] max-w-[100vw] p-0 sm:w-[min(560px,100vw)]">
           <Drawer.CloseTrigger />
           <Drawer.Header className="gap-0.5 border-b border-separator px-5 pt-5 pb-4 sm:px-6">
-            <p className="text-sm text-muted">
+            <Typography.Paragraph size="sm" color="muted">
               {editing === 'new' ? '新建商户' : `编辑商户 · 商户号 ${editing?.id ?? ''}`}
-            </p>
+            </Typography.Paragraph>
             <Drawer.Heading className="truncate pr-10 text-lg font-semibold">
               {editing === 'new' || !editing ? '新的商户' : editing.name}
             </Drawer.Heading>
@@ -440,30 +456,44 @@ function EditForm({
   const firstEnabled = channels.find((c) => c.enabled)?.id ?? channels[0]?.id ?? 0
   const [v, setV] = useState<MerchantInput>(() => (isNew ? { ...empty, channel_id: firstEnabled } : inputOf(target)))
   const set = <K extends keyof MerchantInput>(k: K, x: MerchantInput[K]) => setV((s) => ({ ...s, [k]: x }))
+  // target 是列表里最新的商户：表单没改过时跟着它的修改时间走，改过后在别处又改了就提示冲突。
+  const rev = useRevision(
+    isNew ? 0 : target.updated_at,
+    !isNew && JSON.stringify(v) === JSON.stringify(inputOf(target)),
+  )
+  const save = async (overwrite = false) => {
+    setBusy(true)
+    try {
+      if (isNew) {
+        const r = await api.post<{ merchant: Merchant; key: string }>('/web-api/admin/merchants', v)
+        onCreated(r.merchant, r.key)
+      } else {
+        const saved = await rev.run(
+          async (revision) =>
+            (await api.put<{ merchant: Merchant }>(`/web-api/admin/merchants/${target.id}`, v, { revision })).merchant
+              .updated_at,
+          overwrite,
+        )
+        if (!saved) return
+        toastOK('已保存')
+        onClose()
+      }
+      void qc.invalidateQueries({ queryKey: ['merchants'] })
+    } catch (err) {
+      toastError(err)
+    } finally {
+      setBusy(false)
+    }
+  }
   return (
     <>
       <Drawer.Body className="px-5 py-5 sm:px-6">
         <Form
           id={formId}
           className="flex flex-col gap-7"
-          onSubmit={async (e) => {
+          onSubmit={(e) => {
             e.preventDefault()
-            setBusy(true)
-            try {
-              if (isNew) {
-                const r = await api.post<{ merchant: Merchant; key: string }>('/web-api/admin/merchants', v)
-                onCreated(r.merchant, r.key)
-              } else {
-                await api.put(`/web-api/admin/merchants/${target.id}`, v)
-                toastOK('已保存')
-                onClose()
-              }
-              void qc.invalidateQueries({ queryKey: ['merchants'] })
-            } catch (err) {
-              toastError(err)
-            } finally {
-              setBusy(false)
-            }
+            void save()
           }}
         >
           <Section title="基本信息">
@@ -535,7 +565,20 @@ function EditForm({
           </Section>
         </Form>
       </Drawer.Body>
-      <Drawer.Footer className="gap-2 border-t border-separator px-5 py-4 sm:px-6">
+      <Drawer.Footer className="flex-wrap gap-2 border-t border-separator px-5 py-4 sm:px-6">
+        {rev.conflict && !isNew && (
+          <div className="w-full">
+            <ConflictNotice
+              what="这个商户"
+              onReload={async () => {
+                const l = await qc.fetchQuery({ ...merchantsQuery, staleTime: 0 })
+                const m = l.items.find((r) => r.merchant.id === target.id)?.merchant
+                if (m) setV(inputOf(m))
+              }}
+              onOverwrite={() => save(true)}
+            />
+          </div>
+        )}
         <Button variant="tertiary" onPress={onClose}>
           取消
         </Button>
@@ -590,10 +633,12 @@ function SecretModal({ secret, onClose }: { secret: Secret | null; onClose: () =
               },
             ]}
           />
-          <p className="rounded-xl bg-default/60 px-3 py-2.5 text-xs text-muted">
-            调用方按易支付接入：支付地址填接口地址，商户 ID 填商户号，密钥填 MD5
-            密钥，支付方式填商户所用渠道开放的方式（经营码渠道只有支付宝 alipay）。
-          </p>
+          <Surface variant="secondary" className="rounded-xl px-3 py-2.5">
+            <Typography.Paragraph size="xs" color="muted">
+              调用方按易支付接入：支付地址填接口地址，商户 ID 填商户号，密钥填 MD5
+              密钥，支付方式填商户所用渠道开放的方式（经营码渠道只有支付宝 alipay）。
+            </Typography.Paragraph>
+          </Surface>
         </div>
       )}
     </Dialog>
