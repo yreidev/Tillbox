@@ -125,7 +125,8 @@ export function Notice({
 }) {
   return (
     <Alert role={role} status={status} className={cx('rounded-2xl shadow-none', noticeBg[status], enter, className)}>
-      <Alert.Indicator>{icon}</Alert.Indicator>
+      {/* 放在容器查询的容器里（对外页面）且窄到 20rem 以下时收起图标，给文字让地方 */}
+      <Alert.Indicator className="@max-xs:hidden">{icon}</Alert.Indicator>
       <Alert.Content>
         {title && <Alert.Title>{title}</Alert.Title>}
         {children && <Alert.Description>{children}</Alert.Description>}

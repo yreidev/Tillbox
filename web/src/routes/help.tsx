@@ -195,9 +195,9 @@ function HelpPage() {
   const step = receipt ? 2 : lookup ? 1 : 0
 
   return (
-    <div className="min-h-dvh">
+    <div className="@container min-h-dvh">
       <header className="border-b border-separator bg-surface/80 backdrop-blur">
-        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-3 px-4 sm:px-6">
+        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-3 px-4 sm:px-6 @max-xs:px-2">
           <a
             href="/help"
             className="flex min-w-0 items-center gap-2.5 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-focus"
@@ -215,7 +215,7 @@ function HelpPage() {
           )}
         </div>
       </header>
-      <main className="mx-auto max-w-6xl px-4 pt-6 pb-12 sm:px-6 sm:pt-10">
+      <main className="mx-auto max-w-6xl px-4 pt-6 pb-12 sm:px-6 sm:pt-10 @max-xs:px-2">
         <div className="max-w-2xl">
           <Typography.Heading level={1} className="text-2xl sm:text-3xl">
             付款自助服务
@@ -318,8 +318,11 @@ function HelpPage() {
                           {i > 0 && <Separator />}
                           <ItemCard className="px-3 py-2.5 sm:px-4">
                             <ItemCard.Content>
-                              <ItemCard.Title className="tb-mono">{p.trade_no}</ItemCard.Title>
-                              <ItemCard.Description>
+                              {/* 组件默认单行省略且宽度随内容，窄屏大字号时会把页面撑宽；这里改成折行 */}
+                              <ItemCard.Title className="tb-mono break-all whitespace-normal">
+                                {p.trade_no}
+                              </ItemCard.Title>
+                              <ItemCard.Description className="whitespace-normal">
                                 应付 <span className="tb-num">¥{p.pay_amount}</span> · {states[p.state]}（上次记录）
                               </ItemCard.Description>
                             </ItemCard.Content>

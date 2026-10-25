@@ -232,7 +232,7 @@ function Cashier() {
   return (
     <Shell site={o.site_name}>
       {/* 窄屏或字号调大时放不下，倒计时折到下一行，商品名和订单号不被挤窄 */}
-      <header className="flex flex-wrap items-start gap-x-3 gap-y-2 border-b border-separator px-5 pt-5 pb-4 sm:px-6">
+      <header className="flex flex-wrap items-start gap-x-3 gap-y-2 border-b border-separator px-5 pt-5 pb-4 sm:px-6 @max-xs:px-3">
         <div className="min-w-0 flex-1 basis-40">
           <Typography.Paragraph truncate weight="medium" className="leading-6" title={o.name}>
             {o.name}
@@ -280,18 +280,18 @@ function Cashier() {
         )}
       </div>
       {paid.isError && (
-        <div className="px-5 pb-5 sm:px-6">
+        <div className="px-5 pb-5 sm:px-6 @max-xs:px-3">
           <Notice status="danger">{paid.error.message}，请稍后重试。</Notice>
         </div>
       )}
       <ItemCard<'a'>
         variant="secondary"
         href={`/help?trade_no=${o.trade_no}`}
-        className="relative overflow-hidden rounded-none border-t border-separator bg-surface-secondary/50 px-5 py-4 outline-none focus-visible:bg-surface-secondary sm:px-6"
+        className="relative overflow-hidden rounded-none border-t border-separator bg-surface-secondary/50 px-5 py-4 outline-none focus-visible:bg-surface-secondary sm:px-6 @max-xs:px-3"
         render={(props) => <a {...props} />}
       >
         <PressableFeedback.Highlight />
-        <ItemCard.Icon className="text-muted">
+        <ItemCard.Icon className="text-muted @max-xs:hidden">
           <CircleQuestion />
         </ItemCard.Icon>
         <ItemCard.Content>
@@ -313,22 +313,26 @@ function Cashier() {
 
 function Shell({ site, children }: { site?: string; children: ReactNode }) {
   return (
-    <div className="min-h-dvh px-4 pt-5 pb-8 sm:pt-12">
-      <main className="mx-auto flex w-full max-w-[440px] flex-col gap-4">
-        <div className="flex min-w-0 items-center gap-2.5 px-1">
-          <Logo size={28} />
-          <span className="truncate text-base font-semibold">{site || '收银台'}</span>
-        </div>
-        <Card className="gap-0 overflow-hidden p-0">{children}</Card>
-        <Typography.Paragraph
-          size="xs"
-          color="muted"
-          className="flex items-start justify-center gap-1.5 px-3 leading-relaxed"
-        >
-          <ShieldCheck className="mt-0.5 size-3.5 shrink-0" />
-          <span>确认收款方与应付金额后再付款。请勿向陌生人转账，遇到问题可使用付款自助服务。</span>
-        </Typography.Paragraph>
-      </main>
+    // 页面是容器查询的容器：屏幕窄或字号调大到放不下 20 个字宽（20rem）时，收窄两侧留白，
+    // 提示条和自助入口的图标收起，文字不被挤成一两个字一行。
+    <div className="@container min-h-dvh">
+      <div className="px-4 pt-5 pb-8 sm:pt-12 @max-xs:px-2">
+        <main className="mx-auto flex w-full max-w-[440px] flex-col gap-4">
+          <div className="flex min-w-0 items-center gap-2.5 px-1">
+            <Logo size={28} />
+            <span className="truncate text-base font-semibold">{site || '收银台'}</span>
+          </div>
+          <Card className="gap-0 overflow-hidden p-0">{children}</Card>
+          <Typography.Paragraph
+            size="xs"
+            color="muted"
+            className="flex items-start justify-center gap-1.5 px-3 leading-relaxed"
+          >
+            <ShieldCheck className="mt-0.5 size-3.5 shrink-0" />
+            <span>确认收款方与应付金额后再付款。请勿向陌生人转账，遇到问题可使用付款自助服务。</span>
+          </Typography.Paragraph>
+        </main>
+      </div>
     </div>
   )
 }
@@ -391,7 +395,7 @@ function Outcome({
   children?: ReactNode
 }) {
   return (
-    <EmptyState size="lg" className="gap-6 px-5 py-9 sm:px-6">
+    <EmptyState size="lg" className="gap-6 px-5 py-9 sm:px-6 @max-xs:px-3">
       <EmptyState.Header className="gap-0">
         <EmptyState.Media variant="icon" className={cx('size-16 [&>svg]:size-8', outcomeTone[tone])}>
           {icon}
@@ -422,7 +426,7 @@ function Choose({
   onCancel?: () => void
 }) {
   return (
-    <div className="flex flex-col gap-6 px-5 py-6 sm:px-6">
+    <div className="flex flex-col gap-6 px-5 py-6 sm:px-6 @max-xs:px-3">
       <Amount label="应付金额" value={order.pay_amount} />
       <div className="flex flex-col gap-2">
         <Typography.Paragraph size="sm" className="font-medium">
@@ -527,7 +531,7 @@ function Pay({
   const newTab = !isMobile && !!guide.pay_url && /^https?:\/\//i.test(guide.pay_url)
 
   return (
-    <div className="flex flex-col gap-5 px-5 py-6 sm:px-6">
+    <div className="flex flex-col gap-5 px-5 py-6 sm:px-6 @max-xs:px-3">
       <Amount label="请付款" value={order.pay_amount}>
         {!upstream && (
           <Button

@@ -85,8 +85,9 @@ const tight = [
   { name: '横屏矮屏幕', viewport: { width: 640, height: 320 }, fontSize: '100%' },
 ]
 
-async function fits(page: Page, path: string, fontSize: string) {
+async function fits(page: Page, path: string, fontSize: string, ready?: string) {
   await check(page, path)
+  if (ready) await expect(page.getByText(ready).first()).toBeVisible()
   await page.addStyleTag({ content: `html { font-size: ${fontSize} !important; }` })
   if (process.env.E2E_SCREENSHOTS) await page.screenshot({ path: test.info().outputPath('tight.png'), fullPage: true })
   const out = await page.evaluate(() => {
@@ -134,6 +135,14 @@ test.describe('付款人页面：窄屏大字号、横屏矮屏幕', () => {
     test(`${t.name}：付款自助`, async ({ page }) => {
       await page.setViewportSize(t.viewport)
       await fits(page, '/help', t.fontSize)
+    })
+    test(`${t.name}：付款自助查到订单`, async ({ page }) => {
+      await page.setViewportSize(t.viewport)
+      // 先开一次收银台，订单记进本机的“最近支付”，自助页上查询结果和最近支付两块都有内容。
+      await page.goto(`/cashier/${seed().pending}`)
+      await expect(page.getByText('订单已保存在此浏览器', { exact: false })).toBeVisible()
+      await fits(page, `/help?trade_no=${seed().pending}`, t.fontSize, '这笔付款有问题')
+      await expect(page.getByRole('button', { name: `查询订单 ${seed().pending}` })).toBeAttached()
     })
   }
 })
