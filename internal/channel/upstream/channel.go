@@ -433,12 +433,22 @@ func paidFrom(get func(string) string, raw any) (*channel.Paid, error) {
 	if len(p.TradeNo) > 64 || len(p.APITradeNo) > 128 || len(p.Buyer) > 128 {
 		return nil, errors.New("上游给的订单号或付款人太长")
 	}
-	if t, err := time.ParseInLocation(time.DateTime, get("endtime"), epay.CST); err == nil {
-		p.PaidAt = t
-	}
+	p.PaidAt = paidTime(get("endtime"))
 	b, _ := json.Marshal(raw)
 	p.Raw = string(b)
 	return p, nil
+}
+
+// paidTime 读查单返回的完成时间：彩虹易支付是北京时间的“2006-01-02 15:04:05”，
+// KaiPay 等是 Unix 秒。认不出时返回零值，按收到结果的时间算。
+func paidTime(s string) time.Time {
+	if t, err := time.ParseInLocation(time.DateTime, s, epay.CST); err == nil {
+		return t
+	}
+	if sec, err := strconv.ParseInt(s, 10, 64); err == nil && sec > 0 && sec < 1e11 {
+		return time.Unix(sec, 0)
+	}
+	return time.Time{}
 }
 
 func (c *Channel) Query(ctx context.Context, o *store.Order, tradeNo string) (*channel.Paid, error) {
@@ -476,7 +486,8 @@ func (c *Channel) Query(ctx context.Context, o *store.Order, tradeNo string) (*c
 	if out := str(m, "out_trade_no"); out != "" && out != o.TradeNo {
 		return nil, fmt.Errorf("上游查单返回的订单号 %s 和本单不符", out)
 	}
-	if str(m, "status") != "1" {
+	// 彩虹易支付用 status=1 表示已付款，KaiPay 等只给 trade_status，和回调一样是 TRADE_SUCCESS
+	if str(m, "status") != "1" && str(m, "trade_status") != "TRADE_SUCCESS" {
 		return nil, nil
 	}
 	delete(m, "sign")

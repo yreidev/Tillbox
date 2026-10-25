@@ -284,6 +284,21 @@ func TestQueryAndNotifyV1(t *testing.T) {
 	if _, err := c.Query(context.Background(), testOrder, "U1"); err == nil {
 		t.Error("订单号不符要报错")
 	}
+	// KaiPay 的查单：没有 status，用 trade_status；时间是 Unix 秒。
+	kaipay := func(status string) {
+		s.reply = func(string, epay.Params) map[string]any {
+			return map[string]any{"code": 1, "trade_no": "U1", "out_trade_no": testOrder.TradeNo, "type": "alipay", "trade_status": status,
+				"money": "10.50", "addtime": json.Number("1792202400"), "endtime": json.Number("1792202460")}
+		}
+	}
+	kaipay("WAIT_BUYER_PAY")
+	if paid, err := c.Query(context.Background(), testOrder, "U1"); err != nil || paid != nil {
+		t.Fatalf("KaiPay 未付款：%v %v", paid, err)
+	}
+	kaipay("TRADE_SUCCESS")
+	if paid, err := c.Query(context.Background(), testOrder, "U1"); err != nil || paid.Amount != 1050 || !paid.PaidAt.Equal(time.Unix(1792202460, 0)) {
+		t.Fatalf("KaiPay 已付款：%+v %v", paid, err)
+	}
 
 	n := epay.Params{"pid": "1001", "trade_no": "U1", "out_trade_no": testOrder.TradeNo, "type": "wxpay", "name": "商品", "money": "10.5", "trade_status": "TRADE_SUCCESS"}
 	n["sign"], n["sign_type"] = epay.MD5Sign(n, s.key), "MD5"
