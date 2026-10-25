@@ -149,6 +149,8 @@ TanStack Router 自动生成 `web/src/routeTree.gen.ts`，生成文件纳入版�
 
 `web/e2e/conflict.spec.ts` 在 `data-desktop-light` 项目里走一遍保存冲突：打开“设置 → 站点”后在别处改掉站点名称，页面再保存应提示冲突、草稿保留，“载入最新”和“用我的修改覆盖”各试一次，最后改回原来的名字。
 
+`web/e2e/payment.spec.ts` 在有数据的实例上按桌面和手机宽度（`data-desktop-light`、`data-mobile-light`）走三条完整流程，每条自己建商户和订单，测试里起一个本机的“商户网站”收通知和回跳：商户跳转 `submit.php` 下单、收银台付款后点“我已付款”、自动回跳商户（验签）、商户收到通知（验签）、后台订单详情是“商户已确认”；付错金额进流水异常，在“流水与异常”里人工关联订单后商户收到通知；付款人在自助页提交付款问题、拿到查询凭证，后台申诉详情里有这条。付款用演示渠道的 `/web-api/dev/pay`。`web/e2e/settings.spec.ts` 检查收款参数的数字框边输边出现保存条、“撤销修改”恢复原值，不保存。
+
 两个实例只监听 `127.0.0.1:18591` 和 `127.0.0.1:18592`，数据目录在 `web/e2e/.data/`，每次运行前清空；检查跑完 Playwright 会停掉它们。Chromium 由 `make deps` 装，版本跟着 `web/package.json` 里的 `@playwright/test`；单独装用 `pnpm --dir web exec playwright install chromium`，缺系统库时加 `--with-deps`（要 sudo）。
 
 - 只跑一部分：`pnpm --dir web exec playwright test -c e2e --project setup --project data-desktop-light`。项目名是 `<empty|data>-<desktop|mobile>-<light|dark>`，`setup` 负责登录和造数据，不能省。

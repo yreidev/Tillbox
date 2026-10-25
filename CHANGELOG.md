@@ -13,6 +13,7 @@
 - 后台的数字输入框（收款参数、备份份数、保留天数、AI 设置）以前要离开输入框或按回车才算改动：收款参数底部的保存条要等离开输入框才出现，别处的“保存”按钮一直是灰的，输完直接点不了。现在输入范围内的数就算改动；超出范围的仍在离开输入框时按范围收拢。
 - 概览新增“每日明细”：近 7 天或 30 天每天的已支付笔数、金额和笔均，最近的在前，标出今天和金额最高的一天，每页 10 天。
 - 后台接口：保存类接口支持 `If-Match` 请求头，值是载入时拿到的版本，对不上返回 409；不带时不检查，脚本照旧可用。`GET /web-api/admin/settings` 多返回 `revisions`；Telegram 设置和 AI 设置多返回 `revision`；`GET /web-api/admin/operations` 多返回 `retention_revision` 和 `backup`；这些设置的保存接口返回新的 `revision`。渠道和商户用 `updated_at` 当版本，生成密钥对、重置 MD5 密钥的响应多返回 `updated_at`。新增 `PUT`、`POST /web-api/admin/operations/backup`（改自动备份设置、立即备份），`GET /web-api/admin/update`（含升级指引用的 `releases`、`migrations`、`deploy`、`image`）、`PUT /web-api/admin/settings/update`、`POST /web-api/admin/update/check`；`GET /web-api/auth/me` 多返回 `version` 和 `new_version`。不需要数据库迁移。
+- 开发：浏览器检查新增几条完整流程（`web/e2e/payment.spec.ts`），在有数据的实例上按桌面和手机宽度各跑一遍：商户网站跳转下单、收银台付款、回跳商户和通知商户（都验签）、后台订单详情；付错金额进流水异常后在后台人工关联订单并通知商户；付款人在自助页提交付款问题、拿到查询凭证、后台能看到。`web/e2e/settings.spec.ts` 检查数字框边输边出现保存条。
 
 ## 0.8.0 — 2026-10-20
 

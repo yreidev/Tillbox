@@ -1,33 +1,10 @@
-import { createHash } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
-import { expect, test as setup, type APIRequestContext, type APIResponse } from '@playwright/test'
+import { expect, test as setup, type APIRequestContext } from '@playwright/test'
+import { ok, signMD5, type Merchant } from './epay'
 import { baseURL, instances, seedFile, type Seed } from './instances'
 
 // 两个实例都登录并保存 Cookie；有数据的实例再通过接口造一批数据：两个商户、待付和已付订单、
 // 两条对不上订单的流水异常（一笔少付、一笔金额谁也对不上）、一条付款申诉。商户通知地址连不上，通知页会有重试中的通知。
-
-interface Merchant {
-  pid: string
-  key: string
-}
-
-async function ok<T>(res: Promise<APIResponse>): Promise<T> {
-  const r = await res
-  expect(r.ok(), `${r.url()}：${r.status()} ${await r.text()}`).toBeTruthy()
-  return (await r.json()) as T
-}
-
-// 易支付 V1 的 MD5 签名：去掉 sign、sign_type 和空值，按参数名排序拼成 a=1&b=2，接上商户密钥取 MD5。
-function signMD5(p: Record<string, string>, key: string) {
-  const content = Object.keys(p)
-    .filter((k) => k !== 'sign' && k !== 'sign_type' && p[k] !== '')
-    .sort()
-    .map((k) => `${k}=${p[k]}`)
-    .join('&')
-  return createHash('md5')
-    .update(content + key)
-    .digest('hex')
-}
 
 let seq = 0
 
