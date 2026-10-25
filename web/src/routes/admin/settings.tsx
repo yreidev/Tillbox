@@ -4,6 +4,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import { ActionBar, Button, Form, Link, Surface, Typography } from '@yreidev/ui'
 import { ArrowsRotateRight, ArrowUpRightFromSquare, Copy, Eye, Shield } from '@gravity-ui/icons'
 import { TelegramSettings } from '../../components/telegram-settings'
+import { UpgradeGuide, updateQuery, type UpdateView } from '../../components/upgrade-guide'
 import { api, query } from '../../lib/api'
 import { time } from '../../lib/format'
 import type { AuditLog, Home, HomeMode, Page, Payment, Settings } from '../../lib/types'
@@ -76,6 +77,7 @@ function SettingsPage() {
         {tab === 'site' &&
           body((s) => (
             <>
+              <UpgradeGuide />
               <SiteForm s={s} />
               <HomeForm s={s} />
               <EntryPanel s={s} />
@@ -695,19 +697,6 @@ function EntryPanel({ s }: { s: Settings }) {
   )
 }
 
-interface UpdateView {
-  current: string
-  latest: string
-  newer: boolean
-  notes_url: string
-  checked_at: number
-  error: string
-  check: boolean
-  revision: number
-}
-
-const updateQuery = { queryKey: ['update'], queryFn: () => api.get<UpdateView>('/web-api/admin/update') }
-
 // UpdatePanel 是版本和新版本提醒。提醒开关改了马上保存。
 function UpdatePanel() {
   const qc = useQueryClient()
@@ -801,7 +790,13 @@ function UpdateBody({ u, onChange }: { u: UpdateView; onChange: (v: UpdateView) 
       </SettingsRow>
       <SettingsRow
         label="上次检查"
-        description={u.error ? undefined : '升级步骤见部署文档；升级前先在“备份与归档”页立即备份一次。'}
+        description={
+          u.error
+            ? undefined
+            : u.newer
+              ? `升级步骤见本页最上面的“升级到 ${u.latest}”。`
+              : '有新版本时，本页最上面会列出升级步骤。'
+        }
       >
         <div className="flex flex-wrap items-center gap-3">
           <span className="tb-num text-sm">{time(u.checked_at) || '还没检查过'}</span>

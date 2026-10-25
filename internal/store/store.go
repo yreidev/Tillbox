@@ -10,6 +10,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -22,6 +24,28 @@ import (
 
 //go:embed migrations
 var migrations embed.FS
+
+// SchemaVersion 是这个版本带的最新数据库迁移编号。两种数据库的迁移编号一致（迁移测试里检查）。
+func SchemaVersion() int {
+	entries, _ := fs.ReadDir(migrations, "migrations/sqlite")
+	names := make([]string, len(entries))
+	for i, e := range entries {
+		names[i] = e.Name()
+	}
+	return MaxMigration(names)
+}
+
+// MaxMigration 从 goose 迁移文件名（00006_admin_events.sql）里取最大的编号，没有时为 0。
+func MaxMigration(names []string) int {
+	v := 0
+	for _, name := range names {
+		num, _, ok := strings.Cut(name, "_")
+		if n, err := strconv.Atoi(num); ok && err == nil && strings.HasSuffix(name, ".sql") {
+			v = max(v, n)
+		}
+	}
+	return v
+}
 
 // Open 连上数据库并执行迁移。
 func Open(ctx context.Context, driver, dsn string) (*bun.DB, error) {

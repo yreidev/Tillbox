@@ -224,3 +224,25 @@ func TestUpgradeDemoOrders(t *testing.T) {
 		t.Error("全新安装不该自动建渠道")
 	}
 }
+
+// 升级指引按迁移编号判断新版本有没有数据库变更，只看 SQLite 的迁移，两种数据库的编号要一致。
+func TestSchemaVersion(t *testing.T) {
+	names := func(dir string) []string {
+		entries, err := fs.ReadDir(migrations, dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, e := range entries {
+			out = append(out, e.Name())
+		}
+		return out
+	}
+	sqlite, pg := MaxMigration(names("migrations/sqlite")), MaxMigration(names("migrations/postgres"))
+	if sqlite == 0 || sqlite != pg || SchemaVersion() != sqlite {
+		t.Errorf("迁移编号：SQLite %d，PostgreSQL %d，SchemaVersion %d", sqlite, pg, SchemaVersion())
+	}
+	if got := MaxMigration([]string{"00002_a.sql", "00010_b.sql", "README.md", "x_y.sql"}); got != 10 {
+		t.Errorf("MaxMigration = %d，应为 10", got)
+	}
+}
