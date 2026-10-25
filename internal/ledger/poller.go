@@ -27,7 +27,8 @@ const (
 	MaxBackfillRetry = time.Hour // 补扫失败后最多隔这么久再试
 	notReadyRetry    = 30 * time.Second
 	statePrefix      = "ledger_state:" // 后面接渠道实例键
-	// WindowTolerance 是流水时间最多能超出查询窗口多少。支付宝按哪个时间筛选没有公开说明（未确认），留一点余量；
+	// WindowTolerance 是流水时间最多能超出查询窗口多少。支付宝按哪个时间筛选没有公开说明；2026-10 核对过生产数据，
+	// 流水时间都落在查询窗口内（最多比首次查到早 69 秒），和按 trans_dt 筛选相符，这里留足余量。
 	// 超出更多的（年份不对、差了一个时区）时间不可靠，记成解析不了，免得被当成历史流水忽略或对错订单。
 	WindowTolerance = time.Hour
 )
