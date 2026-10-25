@@ -460,7 +460,17 @@ export function NumberInput({
       {label && <Label>{label}</Label>}
       <NumberField.Group>
         <NumberField.DecrementButton />
-        <NumberField.Input className="tb-num" />
+        <NumberField.Input
+          className="tb-num"
+          onInput={(e) => {
+            // NumberField 失焦或回车才提交，表单在那之前不知道改了，保存按钮也不亮。在范围内、写法规范的整数
+            // 边输边提交（提交后输入框按同样写法显示，光标不跳）；超出范围的留到失焦时按范围收拢。
+            const t = e.currentTarget.value
+            const n = Number(t)
+            const fits = Number.isInteger(n) && String(n) === t && (step ?? 1) === 1
+            if (fits && n >= (minValue ?? -Infinity) && n <= (maxValue ?? Infinity) && n !== value) onChange(n)
+          }}
+        />
         <NumberField.IncrementButton />
       </NumberField.Group>
       {description && <Description>{description}</Description>}

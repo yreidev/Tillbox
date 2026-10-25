@@ -10,6 +10,7 @@
 - 界面全部换成组件库的组件，功能、路由和接口不变：标题、段落和正文代码用 `Typography`；灰底信息块用 `Surface`；链接统一用 HeroUI 的 `Link`（站内跳转仍走前端路由、悬停预加载）；收银台的倒计时、到账确认、结果页和底部“付款问题与自助查询”分别换成 `Chip`、`Alert`、`EmptyState` 和可点的 `ItemCard`；付款自助页的查询结果换成卡片，“暂无记录”换成空状态；新建渠道时的类型卡片换成可点的 `ItemCard`，悬停和按下有反馈。收款参数的保存栏换成改过之后才从屏幕底部浮出的 `ActionBar`，“恢复默认值”移到表单末尾。
 - 动画：新出现的提示条、按开关出现的设置项、收银台切换状态（选方式、付款、已支付等）、后台换页和侧栏“有新版本”淡入；只有进场，收起时立即消失。概览和监控的图表打开动画，自动刷新拿到一样的数据时不重播。系统开了“减少动态效果”时都不播放。
 - 体积（gzip）：全站样式约 47 KB（多约 3 KB，空状态和按压反馈的样式对外页面也要用），收银台在公共入口之外多约 3 KB，付款自助和登录页基本不变，后台样式表约 12 KB。
+- 后台的数字输入框（收款参数、备份份数、保留天数、AI 设置）以前要离开输入框或按回车才算改动：收款参数底部的保存条要等离开输入框才出现，别处的“保存”按钮一直是灰的，输完直接点不了。现在输入范围内的数就算改动；超出范围的仍在离开输入框时按范围收拢。
 - 概览新增“每日明细”：近 7 天或 30 天每天的已支付笔数、金额和笔均，最近的在前，标出今天和金额最高的一天，每页 10 天。
 - 后台接口：保存类接口支持 `If-Match` 请求头，值是载入时拿到的版本，对不上返回 409；不带时不检查，脚本照旧可用。`GET /web-api/admin/settings` 多返回 `revisions`；Telegram 设置和 AI 设置多返回 `revision`；`GET /web-api/admin/operations` 多返回 `retention_revision` 和 `backup`；这些设置的保存接口返回新的 `revision`。渠道和商户用 `updated_at` 当版本，生成密钥对、重置 MD5 密钥的响应多返回 `updated_at`。新增 `PUT`、`POST /web-api/admin/operations/backup`（改自动备份设置、立即备份），`GET /web-api/admin/update`（含升级指引用的 `releases`、`migrations`、`deploy`、`image`）、`PUT /web-api/admin/settings/update`、`POST /web-api/admin/update/check`；`GET /web-api/auth/me` 多返回 `version` 和 `new_version`。不需要数据库迁移。
 
