@@ -178,14 +178,14 @@ func (l *Ledger) recordConflict(ctx context.Context, t *store.Transaction, e cha
 }
 
 // addInvalid 把解析不了的流水连同原文入库，记一条异常等人工核对，不参与匹配。
-// 时间读不出来时按入库时刻记，免得归档任务把原文当成很早的流水提前归档。
+// 时间读不出来或不可靠（超出查询窗口）时按入库时刻记，免得归档任务把原文当成很早的流水提前归档。
 func (l *Ledger) addInvalid(ctx context.Context, channelKey string, e channel.Entry, fp string) error {
 	now := l.Now()
 	at := e.OccurredAt
 	detail := "支付宝返回的这条流水解析不了，没有参与对账：" + e.Invalid + "。请对照支付宝账单核实这笔款项；支付宝之后返回能解析的内容时，会自动按新内容重新对账。"
 	if at.IsZero() {
 		at = now
-		detail += "时间读不出来，暂按入库时刻记。"
+		detail += "时间读不出来或不可靠，暂按入库时刻记。"
 	}
 	t := &store.Transaction{
 		Channel: channelKey, ExternalID: e.ExternalID, Direction: e.Direction, Amount: e.Amount,

@@ -9,6 +9,7 @@ import (
 
 	"tillbox/internal/apptest"
 	"tillbox/internal/channel"
+	"tillbox/internal/epay"
 	"tillbox/internal/ledger"
 	"tillbox/internal/settings"
 	"tillbox/internal/store"
@@ -23,6 +24,7 @@ type recorder struct {
 	failIf  func(start, end time.Time) error // 只让部分窗口失败
 	span    time.Duration
 	entries []channel.Entry
+	stray   []channel.Entry // 不管查哪段都返回，模拟渠道返回了时间不对的流水
 }
 
 func (r *recorder) Key() string            { return r.key }
@@ -52,7 +54,7 @@ func (r *recorder) Fetch(_ context.Context, start, end time.Time) ([]channel.Ent
 			out = append(out, e)
 		}
 	}
-	return out, nil
+	return append(out, r.stray...), nil
 }
 func (r *recorder) take() [][2]time.Time {
 	r.mu.Lock()
@@ -420,5 +422,48 @@ func TestPollerKickSurvivesRecheck(t *testing.T) {
 	case <-fetched:
 	case <-time.After(6 * time.Second):
 		t.Fatal("催查请求在重算下一轮时间时丢失，没有按最小间隔查询")
+	}
+}
+
+// 时间超出查询窗口太多的流水（年份不对、差了一个时区）记成解析不了，不当成历史流水忽略，也不参与匹配；
+// 稍微超出一点的照常入账。
+func TestPollerEntryOutsideWindow(t *testing.T) {
+	f := newFixture(t)
+	o := f.order("A", 1000)
+	near := f.order("B", 2000)
+	old := f.entry(o.PayAmount, time.Date(1999, 1, 1, 0, 0, 0, 0, epay.CST))
+	shifted := f.entry(o.PayAmount, time.Now().Add(-8*time.Hour))
+	broken := channel.Entry{ExternalID: "L-broken", Direction: store.DirIn, OccurredAt: old.OccurredAt, Raw: `{"trans_amount":"x"}`, Invalid: "金额格式不对"}
+	src := &recorder{key: f.ChannelKey(), span: 24 * time.Hour, stray: []channel.Entry{old, shifted, broken, f.entry(near.PayAmount, time.Now())}}
+	p := ledger.NewPoller(f.DB(), f.App.Ledger, src, f.App.Settings)
+	if err := p.RunOnce(f.Ctx); err != nil {
+		t.Fatal(err)
+	}
+	if f.reload(near).Status != store.OrderPaid {
+		t.Fatal("在容差内的流水应照常对账")
+	}
+	if f.reload(o).Status == store.OrderPaid {
+		t.Fatal("时间不可靠的流水不能参与匹配")
+	}
+	for _, e := range []channel.Entry{old, shifted, broken} {
+		var tx store.Transaction
+		if err := f.DB().NewSelect().Model(&tx).Where("external_id = ?", e.ExternalID).Scan(f.Ctx); err != nil {
+			t.Fatal(err)
+		}
+		if tx.State != store.TxnAnomaly || !ledger.Invalid(&tx) {
+			t.Errorf("流水 %s 应记成解析不了，实际状态 %s", e.ExternalID, tx.State)
+		}
+		if d := time.Since(store.Time(tx.OccurredAt)); d < 0 || d > time.Minute {
+			t.Errorf("流水 %s 的时间不可靠，应按入库时刻记，实际 %s", e.ExternalID, store.Time(tx.OccurredAt))
+		}
+	}
+	n := 0
+	for _, a := range f.anomalies() {
+		if a.Kind == store.AnomalyInvalid {
+			n++
+		}
+	}
+	if n != 3 {
+		t.Errorf("应记 3 条解析不了的异常，实际 %d", n)
 	}
 }

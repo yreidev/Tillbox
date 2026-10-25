@@ -3,6 +3,7 @@ package ledger
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 	"sync"
@@ -11,6 +12,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"tillbox/internal/channel"
+	"tillbox/internal/epay"
 	"tillbox/internal/settings"
 	"tillbox/internal/store"
 )
@@ -25,6 +27,9 @@ const (
 	MaxBackfillRetry = time.Hour // 补扫失败后最多隔这么久再试
 	notReadyRetry    = 30 * time.Second
 	statePrefix      = "ledger_state:" // 后面接渠道实例键
+	// WindowTolerance 是流水时间最多能超出查询窗口多少。支付宝按哪个时间筛选没有公开说明（未确认），留一点余量；
+	// 超出更多的（年份不对、差了一个时区）时间不可靠，记成解析不了，免得被当成历史流水忽略或对错订单。
+	WindowTolerance = time.Hour
 )
 
 // StaleAfter 是多久没有成功查账就算停摆：监控告警和后台的查账状态都按它判断。
@@ -303,6 +308,7 @@ func (p *Poller) RunOnce(ctx context.Context) error {
 	if runErr == nil {
 		var entries []channel.Entry
 		if entries, runErr = p.source.Fetch(ctx, start, end); runErr == nil {
+			checkWindow(entries, start, end)
 			r, runErr = p.ledger.Ingest(ctx, key, entries)
 			add(r)
 		}
@@ -346,6 +352,7 @@ func (p *Poller) RunOnce(ctx context.Context) error {
 		}
 		var entries []channel.Entry
 		if entries, fillErr = p.source.Fetch(ctx, s, e); fillErr == nil {
+			checkWindow(entries, s, e)
 			r, fillErr = p.ledger.Ingest(ctx, key, entries)
 			add(r)
 		}
@@ -403,6 +410,23 @@ func (p *Poller) RunOnce(ctx context.Context) error {
 		return err
 	}
 	return runErr
+}
+
+// checkWindow 把时间超出查询窗口 [start, end) 加减 WindowTolerance 的流水标成解析不了，并清掉它的时间，
+// 入库时按入库时刻记。已经解析不了的流水读出了离谱的时间时也一样清掉。
+func checkWindow(entries []channel.Entry, start, end time.Time) {
+	lo, hi := start.Add(-WindowTolerance), end.Add(WindowTolerance)
+	for i := range entries {
+		e := &entries[i]
+		if e.OccurredAt.IsZero() || (!e.OccurredAt.Before(lo) && e.OccurredAt.Before(hi)) {
+			continue
+		}
+		if e.Invalid == "" {
+			e.Invalid = fmt.Sprintf("流水 %s 的时间 %s 不在这次查询的时间段 %s 至 %s 内，时间不可靠",
+				e.ExternalID, epay.FormatTime(e.OccurredAt), epay.FormatTime(start), epay.FormatTime(end))
+		}
+		e.OccurredAt = time.Time{}
+	}
 }
 
 // backoff 是第 failures 次连续失败后要等多久：按活跃间隔指数增长，有上限；
