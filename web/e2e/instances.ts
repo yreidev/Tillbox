@@ -33,4 +33,6 @@ export const seedFile = path.join(dir, 'seed.json')
 export interface Seed {
   pending: string
   paid: string
+  /** 没带支付方式、等付款人在收银台选的订单 */
+  choosing: string
 }

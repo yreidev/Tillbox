@@ -6,7 +6,8 @@ import { ok, signMD5, type Merchant } from './epay'
 // 在浏览器里走完收款的几条主流程，每条都用自己的商户和订单，不碰别的检查要看的数据：
 // 1. 商户网站跳转下单 → 收银台付款 → 回跳商户 → 通知商户 → 后台订单详情；
 // 2. 付错金额进流水异常 → 后台人工关联订单 → 通知商户；
-// 3. 付款人在自助页提交付款问题 → 拿到查询凭证 → 后台能看到这条申诉。
+// 3. 付款人在自助页提交付款问题 → 拿到查询凭证 → 后台能看到这条申诉；
+// 4. 没带支付方式下单 → 付款人在收银台选 → 预下单失败可以换 → 选定后不能换，只能取消订单。
 // 付款用演示渠道的开发接口模拟。只在有数据的实例上跑，桌面和手机宽度各一遍（浅色就够，深色只影响外观）。
 
 const headers = { 'X-Tillbox': '1' }
@@ -162,6 +163,39 @@ test('付错金额：流水异常里人工关联订单后通知商户', async ({
 
     await expectNotified(site, m, tradeNo, '6.00')
     await expectOrderDone(page, tradeNo)
+  } finally {
+    await site.close()
+  }
+})
+
+test('付款人在收银台选支付方式，选定后只能取消订单', async ({ page }) => {
+  const site = await merchantSite()
+  try {
+    // 新商户默认的收款方式：支付宝走演示渠道，微信支付走造数据时建的第三方易支付渠道（对接这个实例自己，预下单微信会被拒）。
+    const m = await newMerchant(page, `浏览器测试商户 ${test.info().project.name}`)
+    await page.goto(`/submit.php?${new URLSearchParams(orderParams(m, site, '2.00', { type: '' }))}`)
+    await page.waitForURL(/\/cashier\/\d{19}$/)
+    const tradeNo = page.url().match(/(\d{19})$/)![1]
+    await expect(page.getByText('选择支付方式')).toBeVisible()
+    await expect(page.getByText('选定后不能更换')).toBeVisible()
+
+    // 第三方平台拒绝了微信：付款人没拿到付款码，还能换支付宝。
+    await page.getByRole('button', { name: '微信支付' }).click()
+    await expect(page.getByText('请换一种支付方式或稍后重试')).toBeVisible()
+    await page.getByRole('button', { name: '支付宝' }).click()
+    await expect(page.getByText('请付款')).toBeVisible()
+    await expect(page.getByRole('button', { name: '换一种支付方式' })).toHaveCount(0)
+    const res = await page.request.post(`/web-api/cashier/${tradeNo}/pay`, { headers, data: { type: 'wxpay' } })
+    expect(res.status(), '选定后换方式应被拒绝').toBe(409)
+
+    // 取消订单要先确认一次。
+    await page.getByRole('button', { name: '取消订单' }).click()
+    await page.getByRole('button', { name: '不取消' }).click()
+    await expect(page.getByText('请付款')).toBeVisible()
+    await page.getByRole('button', { name: '取消订单' }).click()
+    await page.getByRole('button', { name: '确认取消' }).click()
+    await expect(page.getByText('订单已取消')).toBeVisible()
+    await expect(page.getByText('请返回商户网站重新下单')).toBeVisible()
   } finally {
     await site.close()
   }

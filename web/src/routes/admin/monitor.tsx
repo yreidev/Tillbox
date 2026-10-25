@@ -105,7 +105,7 @@ function MonitorPage() {
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
-        description="每 30 秒自动检查渠道、查账、上游、商户通知、流水异常、AI 处理和归档，有问题列在这里并发 Telegram 通知。"
+        description="每 30 秒自动检查渠道、查账、第三方平台、商户通知、流水异常、AI 处理和归档，有问题列在这里并发 Telegram 通知。"
         actions={
           <Button size="sm" variant="secondary" isPending={check.isPending} onPress={() => check.mutate()}>
             <ArrowsRotateRight />
@@ -216,7 +216,7 @@ function AlertsPanel({
 
 function ChannelsPanel({ channels, now }: { channels: ChannelHealth[]; now: number }) {
   return (
-    <Panel title="渠道运行情况" description="能否收款，经营码看查账，上游渠道看预下单、查单和回调">
+    <Panel title="渠道运行情况" description="能否收款，经营码看查账，第三方易支付渠道看预下单、查单和回调">
       {channels.length === 0 ? (
         <Typography.Paragraph size="sm" color="muted">
           还没有支付渠道，到 <RouterLink to="/admin/channels">支付渠道</RouterLink> 页新建。

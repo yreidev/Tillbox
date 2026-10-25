@@ -109,6 +109,15 @@ func (r *Registry) Get(id int64) (channel.Instance, store.Channel, bool) {
 	return inst, r.rows[i], true
 }
 
+// PayTypes 返回渠道开放的支付方式；渠道不存在时第二个返回值是 false。
+func (r *Registry) PayTypes(id int64) ([]string, bool) {
+	inst, _, ok := r.Get(id)
+	if !ok {
+		return nil, false
+	}
+	return inst.PayTypes(), true
+}
+
 // ByKey 按渠道实例键（订单和流水的 channel 列）取渠道实例。
 func (r *Registry) ByKey(key string) (channel.Instance, store.Channel, bool) {
 	return r.Get(store.ChannelID(key))
@@ -276,7 +285,7 @@ func (r *Registry) SaveConfig(ctx context.Context, id int64, cfg string) error {
 	return r.Load(ctx)
 }
 
-// Learn 按一次预下单的结果更新上游渠道记下的单笔限额（见 upstream.Learn）。不改修改时间：这不是管理员改的。
+// Learn 按一次预下单的结果更新第三方易支付渠道记下的单笔限额（见 upstream.Learn）。不改修改时间：这不是管理员改的。
 func (r *Registry) Learn(ctx context.Context, id int64, typ string, amount int64, prepayErr error, now time.Time) error {
 	// 大多数预下单什么都不用改，先拿内存里的配置判断，免得每次都排队读库。
 	if _, row, ok := r.Get(id); !ok || row.Type != store.ChannelEpay || upstream.Learn(row.Config, typ, amount, prepayErr, now) == "" {
@@ -327,7 +336,8 @@ func (r *Registry) Delete(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
-	merchants, err := r.db.NewSelect().Model((*store.Merchant)(nil)).Where("channel_id = ?", id).Count(ctx)
+	merchants, err := r.db.NewSelect().Model((*store.MerchantRoute)(nil)).ColumnExpr("COUNT(DISTINCT merchant_id)").
+		Where("channel_id = ?", id).Count(ctx)
 	if err != nil {
 		return err
 	}
@@ -338,7 +348,7 @@ func (r *Registry) Delete(ctx context.Context, id int64) error {
 		if _, err := tx.NewDelete().Model((*store.Channel)(nil)).Where("id = ?", id).Exec(ctx); err != nil {
 			return err
 		}
-		// 查账进度和上游渠道状态（键名见 ledger.Poller 和 confirm.Service）
+		// 查账进度和第三方易支付渠道状态（键名见 ledger.Poller 和 confirm.Service）
 		_, err := tx.NewDelete().Model((*store.Setting)(nil)).
 			Where("key IN (?)", bun.List([]string{"ledger_state:" + key, "confirm_state:" + key})).Exec(ctx)
 		return err
@@ -358,7 +368,7 @@ func (r *Registry) row(ctx context.Context, id int64) (*store.Channel, error) {
 	return &row, err
 }
 
-// EnsureDemo 在演示模式下、还没有任何渠道时建一个启用的演示渠道，并把没选渠道的商户指向它。
+// EnsureDemo 在演示模式下、还没有任何渠道时建一个启用的演示渠道，没开任何支付方式的商户的支付宝走它。
 func (r *Registry) EnsureDemo(ctx context.Context) error {
 	if !r.Demo {
 		return nil
@@ -372,21 +382,7 @@ func (r *Registry) EnsureDemo(ctx context.Context) error {
 	if _, err := r.db.NewInsert().Model(row).Exec(ctx); err != nil {
 		return err
 	}
-	_, err = r.db.NewUpdate().Model((*store.Merchant)(nil)).Set("channel_id = ?", row.ID).Where("channel_id = 0").Exec(ctx)
+	_, err = r.db.NewRaw(`INSERT INTO merchant_routes (merchant_id, pay_type, channel_id)
+SELECT id, 'alipay', ? FROM merchants WHERE id NOT IN (SELECT merchant_id FROM merchant_routes)`, row.ID).Exec(ctx)
 	return err
-}
-
-// DefaultID 是新建商户默认用的渠道：第一个启用的渠道，没有时用第一个渠道，一个都没有时为 0。
-func (r *Registry) DefaultID() int64 {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	for _, row := range r.rows {
-		if row.Enabled {
-			return row.ID
-		}
-	}
-	if len(r.rows) > 0 {
-		return r.rows[0].ID
-	}
-	return 0
 }

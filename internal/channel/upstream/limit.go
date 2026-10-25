@@ -13,14 +13,14 @@ import (
 	"tillbox/internal/store"
 )
 
-// 易支付的商户信息接口不返回限额，上游的单笔限额只能从它拒单的原话里认出来。
+// 易支付的商户信息接口不返回限额，第三方平台的单笔限额只能从它拒单的原话里认出来。
 
-// LimitTrust 是自动识别的限额拦多久。过了这段时间不再提前拦下，交给上游判断：再被拒就重新识别，
-// 下单成功就放宽。上游调低了限额时，不会一直挡住其实能付的金额。
+// LimitTrust 是自动识别的限额拦多久。过了这段时间不再提前拦下，交给第三方平台判断：再被拒就重新识别，
+// 下单成功就放宽。第三方平台调低了限额时，不会一直挡住其实能付的金额。
 const LimitTrust = 24 * time.Hour
 
 // Limit 是一种支付方式的单笔金额限制（分），0 表示不限。
-// MinAt、MaxAt 是从上游拒单原话里自动识别出来的时刻（毫秒），0 表示后台手动设置。
+// MinAt、MaxAt 是从第三方平台拒单原话里自动识别出来的时刻（毫秒），0 表示后台手动设置。
 type Limit struct {
 	Min   int64 `json:"min,omitempty"`
 	Max   int64 `json:"max,omitempty"`
@@ -42,13 +42,13 @@ type LimitView struct {
 	MaxAt int64  `json:"max_at"`
 }
 
-// 上游以金额为由拒单的原话，例如彩虹易支付的“最小支付金额是0.3元”“当前支付方式单笔最小限额为0.3元”。
+// 第三方平台以金额为由拒单的原话，例如彩虹易支付的“最小支付金额是0.3元”“当前支付方式单笔最小限额为0.3元”。
 var (
 	minRe = regexp.MustCompile(`(?:(?:最小|最低)(?:支付|付款|交易|订单)?(?:金额|限额)(?:是|为|：|:)?|(?:不能|不得|不可)(?:小于|低于))\s*([0-9]+(?:\.[0-9]+)?)\s*元`)
 	maxRe = regexp.MustCompile(`(?:(?:最大|最高)(?:支付|付款|交易|订单)?(?:金额|限额)(?:是|为|：|:)?|(?:不能|不得|不可)(?:大于|高于|超过))\s*([0-9]+(?:\.[0-9]+)?)\s*元`)
 )
 
-// amountLimit 从上游的拒单原话里认出订单金额超出的那一边限额，认不出或金额其实没超出时返回 nil。
+// amountLimit 从第三方平台的拒单原话里认出订单金额超出的那一边限额，认不出或金额其实没超出时返回 nil。
 func amountLimit(typ string, amount int64, err *Error) *channel.AmountError {
 	if m := minRe.FindStringSubmatch(err.Msg); m != nil {
 		if v, ok := epay.ParseMoney(m[1]); ok && amount < v {
@@ -90,8 +90,8 @@ func (c *Channel) CheckAmount(typ string, amount int64, now time.Time) error {
 }
 
 // Learn 按一次预下单的结果更新支付方式的限额，返回新的配置原文，不用改时返回空串。
-// 上游以金额为由拒单时记下上游给的限额，手动设置的值也覆盖；下单成功而金额超出了自动识别的限额，
-// 说明上游已经放宽，清掉那一边。
+// 第三方平台以金额为由拒单时记下第三方平台给的限额，手动设置的值也覆盖；下单成功而金额超出了自动识别的限额，
+// 说明第三方平台已经放宽，清掉那一边。
 func Learn(raw, typ string, amount int64, err error, now time.Time) string {
 	c, perr := ParseConfig(raw)
 	if perr != nil || !slices.Contains(c.Types, typ) {

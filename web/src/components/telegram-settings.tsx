@@ -103,7 +103,7 @@ const telegramQuery = { queryKey: telegramKey, queryFn: () => api.get<TelegramVi
 
 /** 测试消息的种类，和 internal/monitor 的 TestKinds 一致；all 是每种各发一条 */
 const testKinds = [
-  { id: 'alert_open', label: '告警开始', description: '示例：上游查单连续失败', Icon: TriangleExclamation },
+  { id: 'alert_open', label: '告警开始', description: '示例：第三方平台查单连续失败', Icon: TriangleExclamation },
   { id: 'alert_resolved', label: '告警恢复', description: '示例：同一条告警恢复了', Icon: CircleCheck },
   { id: 'paid', label: '收款到账', description: '示例：一笔 ¥12.00 的订单到账', Icon: CreditCard },
   { id: 'claim', label: '付款申诉', description: '示例：付款人申诉已付款未到账', Icon: Comment },

@@ -8,12 +8,14 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
 	"time"
 
 	"tillbox/internal/channel"
 	"tillbox/internal/epay"
 	"tillbox/internal/order"
+	"tillbox/internal/payroute"
 	"tillbox/internal/store"
 )
 
@@ -26,6 +28,7 @@ func (a *API) createPaymentTest(w http.ResponseWriter, r *http.Request) error {
 		MerchantID int64  `json:"merchant_id"`
 		Money      string `json:"money"`
 		Version    int    `json:"version"`
+		PayType    string `json:"pay_type"` // 空：商户只开了一种方式时用它，开了几种时在收银台选
 	}
 	if err := readJSON(r, &in); err != nil {
 		return err
@@ -41,40 +44,51 @@ func (a *API) createPaymentTest(w http.ResponseWriter, r *http.Request) error {
 	if err != nil || !m.Enabled {
 		return badRequest("请选择已启用的商户")
 	}
-	ch, row, found := a.Channels.Get(m.ChannelID)
-	if !found {
-		return badRequest("这个商户还没有选择支付渠道")
+	methods := payroute.Methods(r.Context(), a.Channels, m.Routes)
+	if len(methods) == 0 {
+		return badRequest("这个商户还没有开放任何支付方式")
 	}
-	if err := ch.Ready(r.Context()); err != nil {
-		return badRequest("商户所用的渠道「" + row.Name + "」不能收款：" + err.Error())
+	typ := in.PayType
+	if typ == "" && len(methods) == 1 {
+		typ = methods[0].Type
+	}
+	var pick *payroute.Method
+	if typ != "" {
+		mt, found := payroute.Find(methods, typ)
+		if !found {
+			return badRequest("这个商户没有开放" + channel.TypeLabel(typ))
+		}
+		if !mt.Ready() {
+			return badRequest(channel.TypeLabel(typ) + "现在收不了款：" + mt.Problem)
+		}
+		pick = &mt
+	} else if !slices.ContainsFunc(methods, payroute.Method.Ready) {
+		return badRequest("这个商户开放的支付方式现在都收不了款")
 	}
 	var nonce [16]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return err
 	}
-	_, confirming := ch.(channel.Confirmer)
-	typ := ""
-	if types := ch.PayTypes(); len(types) == 1 || !confirming {
-		typ = types[0] // 上游渠道开放了多种方式时，在收银台选
-	}
-	o, _, err := a.Orders.Create(r.Context(), order.CreateInput{
+	create := order.CreateInput{
 		IsTest: true, MerchantID: m.ID, OutTradeNo: "test-" + hex.EncodeToString(nonce[:]),
-		Version: in.Version, Channel: ch.Key(), NoTail: confirming, PayType: typ, Name: "后台支付测试",
-		Money: epay.FormatCents(amount), Amount: amount,
+		Version: in.Version, NoTail: true, Name: "后台支付测试", Money: epay.FormatCents(amount), Amount: amount,
 		NotifyURL: a.BaseURL(r) + "/web-api/payment-test/notify", ClientIP: a.ClientIP(r), Device: "pc",
-	})
+	}
+	if pick != nil {
+		create.Channel, create.NoTail, create.PayType = pick.Row.Key(), pick.Confirming(), pick.Type
+	}
+	o, _, err := a.Orders.Create(r.Context(), create)
 	if err != nil {
 		return badRequest(err.Error())
 	}
 	_ = store.Audit(r.Context(), a.DB, a.actor(r), "payment_test.create", o.TradeNo, "")
-	if confirming {
-		if typ != "" {
-			if _, err := a.Confirm.Prepare(r.Context(), o, typ, a.BaseURL(r)); err != nil {
-				return badRequest("向上游预下单失败：" + err.Error())
-			}
+	if pick != nil {
+		if _, err := payroute.Choose(r.Context(), a.Orders, a.Confirm, o, *pick, a.BaseURL(r)); err != nil {
+			return badRequest("向第三方平台预下单失败：" + err.Error())
 		}
-	} else {
-		a.Pollers.Kick(ch.Key())
+		if !pick.Confirming() {
+			a.Pollers.Kick(o.Channel)
+		}
 	}
 	ok(w, map[string]any{"order": o, "cashier_url": a.BaseURL(r) + "/cashier/" + o.TradeNo})
 	return nil

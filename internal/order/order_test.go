@@ -173,7 +173,7 @@ func TestAllocationPerChannel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := e.NewMerchant(&merchant.Input{Name: "B", Enabled: true, ChannelID: second.ID})
+	b := e.NewMerchant(&merchant.Input{Name: "B", Enabled: true, Routes: map[string]int64{"alipay": second.ID}})
 	if a.Channel == b.Channel || b.Channel != second.Key() {
 		t.Fatalf("两个商户应在不同渠道：%s %s", a.Channel, b.Channel)
 	}

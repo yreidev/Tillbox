@@ -22,7 +22,7 @@ const upstream = (u: Partial<UpstreamStatus>): UpstreamStatus => ({
 })
 
 describe('channelHealth', () => {
-  it('上游的预下单和查单分开计数，到 3 次算严重', () => {
+  it('第三方平台的预下单和查单分开计数，到 3 次算严重', () => {
     const lines = channelHealth(
       {
         type: 'epay',

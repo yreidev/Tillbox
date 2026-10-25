@@ -1,4 +1,4 @@
-// Package upstream 是上游易支付渠道：把订单转给别家易支付平台收款，按回调和查单逐单确认到账。
+// Package upstream 是第三方易支付渠道：把订单转给别家易支付平台收款，按回调和查单逐单确认到账。
 // V1 用 MD5 签名，V2 用 RSA 签名，协议见 docs/research/epay-protocol.md。
 package upstream
 
@@ -29,13 +29,13 @@ import (
 // TimestampWindow 是 V2 响应和回调里时间戳允许的误差。
 const TimestampWindow = 300 * time.Second
 
-// maxBody 是上游响应正文的上限。
+// maxBody 是第三方平台响应正文的上限。
 const maxBody = 1 << 20
 
 // NotifyPath 是渠道回调地址的路径。
 func NotifyPath(id int64) string { return fmt.Sprintf("/web-api/channels/%d/notify", id) }
 
-// Error 是上游返回的业务错误（code 不是成功码）。
+// Error 是第三方平台返回的业务错误（code 不是成功码）。
 type Error struct {
 	Code string
 	Msg  string
@@ -43,9 +43,9 @@ type Error struct {
 
 func (e *Error) Error() string {
 	if e.Msg == "" {
-		return fmt.Sprintf("上游返回错误（code=%s）", e.Code)
+		return fmt.Sprintf("第三方平台返回错误（code=%s）", e.Code)
 	}
-	return fmt.Sprintf("上游返回错误（code=%s）：%s", e.Code, e.Msg)
+	return fmt.Sprintf("第三方平台返回错误（code=%s）：%s", e.Code, e.Msg)
 }
 
 // Channel 实现 channel.Confirmer。后台改了配置后由渠道注册表原地更新。
@@ -176,10 +176,10 @@ func (c *Channel) sign(cr *creds, p epay.Params) error {
 func (c *Channel) verifyTimestamp(ts string) error {
 	n, err := strconv.ParseInt(ts, 10, 64)
 	if err != nil {
-		return errors.New("上游没有给时间戳")
+		return errors.New("第三方平台没有给时间戳")
 	}
 	if d := c.Now().Sub(time.Unix(n, 0)); d > TimestampWindow || d < -TimestampWindow {
-		return errors.New("上游的时间戳和本机相差超过 300 秒")
+		return errors.New("第三方平台的时间戳和本机相差超过 300 秒")
 	}
 	return nil
 }
@@ -216,24 +216,24 @@ func (c *Channel) call(ctx context.Context, cr *creds, path string, query, form 
 		if errors.As(err, &ue) {
 			err = ue.Err // 不把带密钥的地址写进错误
 		}
-		return nil, fmt.Errorf("请求上游失败：%w", err)
+		return nil, fmt.Errorf("请求第三方平台失败：%w", err)
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
 	if err != nil {
-		return nil, fmt.Errorf("读取上游响应失败：%w", err)
+		return nil, fmt.Errorf("读取第三方平台响应失败：%w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("上游返回 HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("第三方平台返回 HTTP %d", resp.StatusCode)
 	}
 	if len(raw) > maxBody {
-		return nil, errors.New("上游响应太大")
+		return nil, errors.New("第三方平台响应太大")
 	}
 	dec := json.NewDecoder(bytes.NewReader(bytes.TrimPrefix(raw, []byte("\xef\xbb\xbf"))))
 	dec.UseNumber()
 	var m map[string]any
 	if err := dec.Decode(&m); err != nil || m == nil {
-		return nil, fmt.Errorf("上游返回的不是 JSON：%s", snippet(raw))
+		return nil, fmt.Errorf("第三方平台返回的不是 JSON：%s", snippet(raw))
 	}
 	return m, nil
 }
@@ -267,7 +267,7 @@ func (c *Channel) check(cr *creds, m map[string]any) error {
 	if code != want {
 		msg := str(m, "msg")
 		if code == "" {
-			return fmt.Errorf("上游响应里没有 code：%s", msg)
+			return fmt.Errorf("第三方平台响应里没有 code：%s", msg)
 		}
 		return &Error{Code: code, Msg: msg}
 	}
@@ -276,13 +276,13 @@ func (c *Channel) check(cr *creds, m map[string]any) error {
 	}
 	sign := str(m, "sign")
 	if sign == "" {
-		return errors.New("上游响应没有签名")
+		return errors.New("第三方平台响应没有签名")
 	}
 	if err := c.verifyTimestamp(str(m, "timestamp")); err != nil {
 		return err
 	}
 	if !epay.RSAVerify(epay.SignContent(epay.DecodedValues(m)), sign, cr.platform) {
-		return errors.New("上游响应验签失败，请核对平台公钥")
+		return errors.New("第三方平台响应验签失败，请核对平台公钥")
 	}
 	return nil
 }
@@ -340,7 +340,7 @@ func (c *Channel) Prepay(ctx context.Context, o *store.Order, base string) (chan
 	}
 	pay.TradeNo = str(m, "trade_no")
 	if pay.TradeNo == "" {
-		return pay, errors.New("上游没有返回订单号")
+		return pay, errors.New("第三方平台没有返回订单号")
 	}
 	if cr.Version == 1 {
 		for _, f := range []struct{ field, typ string }{
@@ -363,20 +363,20 @@ func (c *Channel) Prepay(ctx context.Context, o *store.Order, base string) (chan
 		case "html":
 			pay.InfoType = store.InfoSubmit
 		default:
-			return pay, fmt.Errorf("上游给的付款方式 %q 收银台用不了", t)
+			return pay, fmt.Errorf("第三方平台给的付款方式 %q 收银台用不了", t)
 		}
 	}
 	switch {
 	case pay.InfoType == "":
-		return pay, errors.New("上游没有返回付款信息")
+		return pay, errors.New("第三方平台没有返回付款信息")
 	case pay.InfoType == store.InfoSubmit:
 		pay.Info = "" // HTML 表单不入库，付款人点“去付款”时现签跳转地址
 	case pay.Info == "" || len(pay.Info) > 2048:
-		return pay, errors.New("上游给的付款信息是空的或太长")
+		return pay, errors.New("第三方平台给的付款信息是空的或太长")
 	case pay.InfoType == store.InfoJump && !webURL(pay.Info):
-		return pay, errors.New("上游给的付款链接不是 http(s) 地址")
+		return pay, errors.New("第三方平台给的付款链接不是 http(s) 地址")
 	case pay.InfoType == store.InfoURLScheme && !appURL(pay.Info):
-		return pay, errors.New("上游给的唤起链接不能用")
+		return pay, errors.New("第三方平台给的唤起链接不能用")
 	}
 	return pay, nil
 }
@@ -421,17 +421,17 @@ func (c *Channel) SubmitURL(_ context.Context, o *store.Order, base string) (str
 func paidFrom(get func(string) string, raw any) (*channel.Paid, error) {
 	amount, ok := epay.ParseMoney(get("money"))
 	if !ok {
-		return nil, fmt.Errorf("上游给的金额 %q 不对", get("money"))
+		return nil, fmt.Errorf("第三方平台给的金额 %q 不对", get("money"))
 	}
 	p := &channel.Paid{
 		TradeNo: get("trade_no"), OutTradeNo: get("out_trade_no"), Type: get("type"), Amount: amount,
 		APITradeNo: get("api_trade_no"), Buyer: get("buyer"),
 	}
 	if p.TradeNo == "" || p.OutTradeNo == "" {
-		return nil, errors.New("上游没有给订单号")
+		return nil, errors.New("第三方平台没有给订单号")
 	}
 	if len(p.TradeNo) > 64 || len(p.APITradeNo) > 128 || len(p.Buyer) > 128 {
-		return nil, errors.New("上游给的订单号或付款人太长")
+		return nil, errors.New("第三方平台给的订单号或付款人太长")
 	}
 	p.PaidAt = paidTime(get("endtime"))
 	b, _ := json.Marshal(raw)
@@ -484,7 +484,7 @@ func (c *Channel) Query(ctx context.Context, o *store.Order, tradeNo string) (*c
 		return nil, err
 	}
 	if out := str(m, "out_trade_no"); out != "" && out != o.TradeNo {
-		return nil, fmt.Errorf("上游查单返回的订单号 %s 和本单不符", out)
+		return nil, fmt.Errorf("第三方平台查单返回的订单号 %s 和本单不符", out)
 	}
 	// 彩虹易支付用 status=1 表示已付款，KaiPay 等只给 trade_status，和回调一样是 TRADE_SUCCESS
 	if str(m, "status") != "1" && str(m, "trade_status") != "TRADE_SUCCESS" {
@@ -496,7 +496,7 @@ func (c *Channel) Query(ctx context.Context, o *store.Order, tradeNo string) (*c
 		return nil, err
 	}
 	if paid.OutTradeNo != o.TradeNo {
-		return nil, fmt.Errorf("上游查单返回的订单号 %s 和本单不符", paid.OutTradeNo)
+		return nil, fmt.Errorf("第三方平台查单返回的订单号 %s 和本单不符", paid.OutTradeNo)
 	}
 	return paid, nil
 }

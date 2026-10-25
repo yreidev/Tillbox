@@ -71,6 +71,13 @@ test.describe('对外页面', () => {
     await expect(page.getByText('我已付款').first()).toBeVisible()
   })
 
+  test('收银台选支付方式', async ({ page }) => {
+    test.skip(instance() !== 'data', '只有有数据的实例有订单')
+    await check(page, `/cashier/${seed().choosing}`)
+    await expect(page.getByText('选择支付方式')).toBeVisible()
+    await expect(page.getByRole('button', { name: '微信支付' })).toBeVisible()
+  })
+
   test('付款自助查已付订单', async ({ page }) => {
     test.skip(instance() !== 'data', '只有有数据的实例有订单')
     await check(page, `/help?trade_no=${seed().paid}`)
@@ -127,6 +134,10 @@ test.describe('付款人页面：窄屏大字号、横屏矮屏幕', () => {
       const paid = page.getByRole('button', { name: '我已付款' })
       await paid.scrollIntoViewIfNeeded()
       await expect(paid).toBeInViewport()
+    })
+    test(`${t.name}：选支付方式的收银台`, async ({ page }) => {
+      await page.setViewportSize(t.viewport)
+      await fits(page, `/cashier/${seed().choosing}`, t.fontSize, '选择支付方式')
     })
     test(`${t.name}：已支付的收银台`, async ({ page }) => {
       await page.setViewportSize(t.viewport)

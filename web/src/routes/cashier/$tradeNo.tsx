@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { createFileRoute } from '@tanstack/react-router'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { Button, Card, Chip, EmptyState, ItemCard, PressableFeedback, Spinner, Typography } from '@yreidev/ui'
 import {
   ArrowUpRightFromSquare,
@@ -29,9 +29,9 @@ interface Guide {
   payee_name: string
   app: string
   manual_amount: boolean
-  /** 上游渠道：“去付款”按钮的链接（上游付款页或唤起 App 的链接） */
+  /** 第三方易支付渠道：“去付款”按钮的链接（第三方平台付款页或唤起 App 的链接） */
   pay_url?: string
-  /** 上游渠道：要先向本站取上游收银台的跳转地址 */
+  /** 第三方易支付渠道：要先向本站取第三方平台收银台的跳转地址 */
   submit?: boolean
 }
 
@@ -55,7 +55,7 @@ interface CashierOrder {
   site_name: string
   has_return: boolean
   guide?: Guide
-  /** 上游渠道的订单才有：可选的支付方式和当前选定的方式 */
+  /** 付款人还没选支付方式的订单（pay_type 为空）和第三方易支付渠道的订单才有：可选的支付方式和当前选定的方式 */
   pay_types?: PayTypeOption[]
   pay_type?: string
 }
@@ -118,9 +118,8 @@ const inAlipay = typeof navigator !== 'undefined' && /AlipayClient/i.test(naviga
 
 function Cashier() {
   const { tradeNo } = Route.useParams()
-  const qc = useQueryClient()
   const [claimedAt, setClaimedAt] = useState(0)
-  const [choosing, setChoosing] = useState(false)
+  const [cancelled, setCancelled] = useState(false)
   const claimed = claimedAt > 0
   const confirmUntil = (o?: CashierOrder) =>
     o?.state === 'expired' ? Math.max(o.expires_at, claimedAt) + confirmWindow : 0
@@ -171,19 +170,22 @@ function Cashier() {
     mutationFn: () => api.post(`/web-api/cashier/${tradeNo}/paid`),
     onSuccess: () => setClaimedAt(Date.now() + offset),
   })
-  // 上游渠道：选定支付方式后向上游预下单，拿到二维码或付款链接。
+  // 选定支付方式：定下渠道（经营码这时才分配金额尾数），第三方易支付接着预下单。选定后不能再换。
+  // 成功后重新读一遍订单，拿到应付金额和付款信息再换页面。
   const choose = useMutation({
-    mutationFn: (type: string) =>
-      api.post<{ guide: Guide; pay_type: string }>(`/web-api/cashier/${tradeNo}/pay`, { type }),
-    onSuccess: (r) => {
-      qc.setQueryData<CashierOrder>(['cashier', tradeNo], (old) =>
-        old ? { ...old, guide: r.guide, pay_type: r.pay_type } : old,
-      )
-      setChoosing(false)
-    },
+    mutationFn: (type: string) => api.post(`/web-api/cashier/${tradeNo}/pay`, { type }),
+    onSuccess: () => q.refetch(),
     onError: (e) => {
-      // 409 是订单状态变了；422 是金额超出这种方式的单笔限额，刷新后这种方式会标成不可用
+      // 409 是订单状态变了或已经选了别的方式；422 是金额超出这种方式的单笔限额，刷新后这种方式会标成不可用
       if (e instanceof ApiError && (e.status === 409 || e.status === 422)) void q.refetch()
+    },
+  })
+  // 取消订单：要换支付方式只能这样，取消后回商户网站重新下单。
+  const cancel = useMutation({
+    mutationFn: () => api.post(`/web-api/cashier/${tradeNo}/cancel`),
+    onSuccess: () => {
+      setCancelled(true)
+      return q.refetch()
     },
   })
 
@@ -221,7 +223,7 @@ function Cashier() {
   const stage =
     o.state === 'paid'
       ? 'paid'
-      : o.state === 'pending' && o.pay_types && (!o.guide || choosing)
+      : o.state === 'pending' && o.pay_types && !o.guide
         ? 'choose'
         : o.state === 'pending' && o.guide
           ? 'pay'
@@ -247,13 +249,12 @@ function Cashier() {
       <div key={stage} className={enter}>
         {o.state === 'paid' ? (
           <Paid order={o} />
-        ) : o.state === 'pending' && o.pay_types && (!o.guide || choosing) ? (
+        ) : o.state === 'pending' && o.pay_types && !o.guide ? (
           <Choose
             order={o}
             busy={choose.isPending ? choose.variables : undefined}
             error={choose.isError ? choose.error.message : ''}
             onChoose={(t) => choose.mutate(t)}
-            onCancel={o.guide ? () => setChoosing(false) : undefined}
           />
         ) : o.state === 'pending' && o.guide ? (
           <Pay
@@ -262,7 +263,13 @@ function Cashier() {
             claimed={claimed}
             onPaid={() => paid.mutate()}
             busy={paid.isPending}
-            onSwitch={o.pay_types && o.pay_types.length > 1 ? () => setChoosing(true) : undefined}
+            cancel={
+              <CancelOrder
+                busy={cancel.isPending}
+                error={cancel.isError ? cancel.error.message : ''}
+                onCancel={() => cancel.mutate()}
+              />
+            }
           />
         ) : confirming ? (
           <Confirming claimed={claimed} onPaid={() => paid.mutate()} busy={paid.isPending} />
@@ -270,11 +277,21 @@ function Cashier() {
           <Outcome
             icon={<CircleMinus />}
             tone="default"
-            title={o.state === 'closed' ? '订单已关闭' : o.state === 'disputed' ? '订单待人工处理' : '订单已过期'}
+            title={
+              o.state === 'closed'
+                ? cancelled
+                  ? '订单已取消'
+                  : '订单已关闭'
+                : o.state === 'disputed'
+                  ? '订单待人工处理'
+                  : '订单已过期'
+            }
             text={
               o.state === 'disputed'
                 ? '这笔订单的到账需要人工核对，请联系商户。'
-                : '如果你已经付了款，请不要重复付款，保留付款账单，通过下方“付款问题与自助查询”提交付款问题；没有付款的话请返回商户网站重新下单。'
+                : o.state === 'closed' && cancelled
+                  ? '这笔订单不能再付款了。要换一种支付方式，请返回商户网站重新下单。'
+                  : '如果你已经付了款，请不要重复付款，保留付款账单，通过下方“付款问题与自助查询”提交付款问题；没有付款的话请返回商户网站重新下单。'
             }
           />
         )}
@@ -411,27 +428,32 @@ function Outcome({
   )
 }
 
-// Choose 是上游渠道订单选择支付方式的页面。
+// Choose 是选择支付方式的页面：商户开了几种方式、下单时没指定的订单，以及第三方平台预下单失败要重试的订单。
 function Choose({
   order,
   busy,
   error,
   onChoose,
-  onCancel,
 }: {
   order: CashierOrder
   busy?: string
   error: string
   onChoose: (type: string) => void
-  onCancel?: () => void
 }) {
+  // 还没选方式时应付金额没定（经营码渠道选定后才加尾数），先显示订单金额
+  const undecided = !order.pay_type
   return (
     <div className="flex flex-col gap-6 px-5 py-6 sm:px-6 @max-xs:px-3">
-      <Amount label="应付金额" value={order.pay_amount} />
+      <Amount label={undecided ? '订单金额' : '应付金额'} value={undecided ? order.amount : order.pay_amount} />
       <div className="flex flex-col gap-2">
         <Typography.Paragraph size="sm" className="font-medium">
           选择支付方式
         </Typography.Paragraph>
+        {undecided && (order.pay_types ?? []).length > 1 && (
+          <Typography.Paragraph size="xs" color="muted">
+            选定后不能更换，要换只能取消订单重新下单。
+          </Typography.Paragraph>
+        )}
         {(order.pay_types ?? []).map((t) => {
           const current = t.type === order.pay_type
           return (
@@ -458,11 +480,6 @@ function Choose({
         })}
       </div>
       {error && <Notice status="danger">{error}</Notice>}
-      {onCancel && (
-        <Button fullWidth variant="ghost" onPress={onCancel} isDisabled={!!busy}>
-          返回
-        </Button>
-      )}
     </div>
   )
 }
@@ -479,14 +496,15 @@ function Pay({
   claimed,
   onPaid,
   busy,
-  onSwitch,
+  cancel,
 }: {
   order: CashierOrder
   guide: Guide
   claimed: boolean
   onPaid: () => void
   busy: boolean
-  onSwitch?: () => void
+  /** 取消订单的按钮，点了“我已付款”后不再显示 */
+  cancel: ReactNode
 }) {
   const png = useMemo(() => (guide.qrcode ? qrPNG(guide.qrcode) : ''), [guide.qrcode])
   const [copied, setCopied] = useState(false)
@@ -508,7 +526,7 @@ function Pay({
     return () => clearTimeout(t)
   }, [copied])
 
-  // goSubmit 向本站取上游收银台的跳转地址再跳过去。电脑上先开好新窗口，免得被拦截弹窗。
+  // goSubmit 向本站取第三方平台收银台的跳转地址再跳过去。电脑上先开好新窗口，免得被拦截弹窗。
   const goSubmit = async () => {
     setGoing(true)
     setGoError('')
@@ -629,11 +647,34 @@ function Pay({
             我已付款
           </Button>
         )}
-        {onSwitch && !claimed && (
-          <Button fullWidth variant="ghost" onPress={onSwitch}>
-            换一种支付方式
-          </Button>
-        )}
+        {!claimed && cancel}
+      </div>
+    </div>
+  )
+}
+
+// CancelOrder 是付款页底部的“取消订单”：先在原地确认一次，提醒已经付了款的不要取消。
+function CancelOrder({ busy, error, onCancel }: { busy: boolean; error: string; onCancel: () => void }) {
+  const [asking, setAsking] = useState(false)
+  if (!asking)
+    return (
+      <Button fullWidth variant="ghost" onPress={() => setAsking(true)}>
+        取消订单
+      </Button>
+    )
+  return (
+    <div role="group" aria-label="确认取消订单" className={cx('flex flex-col gap-3', enter)}>
+      <Notice status="warning" title="确定取消这笔订单？">
+        取消后不能再付款，要换支付方式请回到商户网站重新下单。已经付了款的不要取消，等待到账确认即可。
+      </Notice>
+      {error && <Notice status="danger">{error}</Notice>}
+      <div className="flex gap-2">
+        <Button fullWidth variant="secondary" onPress={() => setAsking(false)} isDisabled={busy}>
+          不取消
+        </Button>
+        <Button fullWidth variant="danger" onPress={onCancel} isPending={busy}>
+          确认取消
+        </Button>
       </div>
     </div>
   )

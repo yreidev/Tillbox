@@ -39,7 +39,7 @@ export interface OrderView extends Order {
   channel_name: string
 }
 
-/** 上游渠道订单的预下单记录 */
+/** 第三方易支付渠道订单的预下单记录 */
 export interface UpstreamPayment {
   order_id: number
   channel_id: number
@@ -134,7 +134,8 @@ export interface Merchant {
   key_type: number
   domains: string
   enabled: boolean
-  channel_id: number
+  /** 收款方式：支付方式 → 渠道编号，没开的方式不出现 */
+  routes: Record<string, number>
   remark: string
   created_at: number
   updated_at: number
@@ -146,7 +147,8 @@ export interface MerchantInput {
   key_type: number
   domains: string
   enabled: boolean
-  channel_id: number
+  /** 不传时新建商户用默认的收款方式，修改时保留原样；渠道编号是 0 的方式算没开 */
+  routes?: Record<string, number>
   remark: string
 }
 
@@ -257,7 +259,7 @@ export interface UpstreamConfig {
   limits: Record<string, UpstreamLimit>
 }
 
-/** 上游渠道一种支付方式的单笔限额（元，不限为空）；*_at 是自动识别的时刻，0 表示手动设置 */
+/** 第三方易支付渠道一种支付方式的单笔限额（元，不限为空）；*_at 是自动识别的时刻，0 表示手动设置 */
 export interface UpstreamLimit {
   min: string
   max: string
@@ -265,7 +267,7 @@ export interface UpstreamLimit {
   max_at: number
 }
 
-/** 上游渠道的预下单、查单和回调状态（存在数据库里，重启后保留） */
+/** 第三方易支付渠道的预下单、查单和回调状态（存在数据库里，重启后保留） */
 export interface UpstreamStatus {
   key: string
   channel_id: number
@@ -308,7 +310,7 @@ export interface ChannelView {
 
 export const channelTypeText: Record<ChannelType, string> = {
   alipay_qr: '支付宝经营码',
-  epay: '上游易支付',
+  epay: '第三方易支付',
   demo: '演示渠道',
 }
 

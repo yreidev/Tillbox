@@ -88,6 +88,7 @@ func New(ctx context.Context, cfg *config.Config, db *bun.DB, box *secret.Box, u
 	a.Pollers = ledger.NewPollers(db, a.Ledger, st)
 	a.Channels = registry.New(db, box, cfg.Demo)
 	a.Channels.OnChange = func() { a.Pollers.Sync(a.Channels.Sources()) }
+	a.Merchants.Channels = a.Channels
 	if err := a.Channels.EnsureDemo(ctx); err != nil {
 		return nil, fmt.Errorf("建演示渠道失败：%w", err)
 	}
@@ -96,7 +97,7 @@ func New(ctx context.Context, cfg *config.Config, db *bun.DB, box *secret.Box, u
 	}
 	a.Confirm = confirm.New(db, st, a.Orders, a.Ledger, a.Channels)
 	if err := a.Confirm.Load(ctx); err != nil {
-		return nil, fmt.Errorf("读取上游渠道状态失败：%w", err)
+		return nil, fmt.Errorf("读取第三方易支付渠道状态失败：%w", err)
 	}
 	a.Assistance = assistance.New(db, st, a.Orders, a.Ledger, a.Pollers, a.Confirm, a.Notifier)
 	a.Monitor = &monitor.Service{
@@ -122,13 +123,13 @@ func New(ctx context.Context, cfg *config.Config, db *bun.DB, box *secret.Box, u
 	}
 	a.Handler = web.Handler(web.Deps{
 		Assistance: a.Assistance,
-		Config:     cfg, Gateway: gw, Admin: api, Orders: a.Orders, Settings: st, Channels: a.Channels,
+		Config:     cfg, Gateway: gw, Admin: api, Orders: a.Orders, Merchants: a.Merchants, Settings: st, Channels: a.Channels,
 		Pollers: a.Pollers, Confirm: a.Confirm, Signer: a.Signer, Demo: cfg.Demo, UI: ui,
 	})
 	return a, nil
 }
 
-// Run 跑后台任务（查账、上游查单、通知、订单过期、清理会话、监控告警、归档和备份），直到 ctx 结束。
+// Run 跑后台任务（查账、第三方平台查单、通知、订单过期、清理会话、监控告警、归档和备份），直到 ctx 结束。
 func (a *App) Run(ctx context.Context) {
 	go a.Assistance.Run(ctx)
 	go a.Monitor.Run(ctx)

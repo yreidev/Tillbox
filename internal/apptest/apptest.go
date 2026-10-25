@@ -31,6 +31,7 @@ import (
 
 	"tillbox/internal/admin"
 	"tillbox/internal/app"
+	"tillbox/internal/channel"
 	"tillbox/internal/channel/fake"
 	"tillbox/internal/config"
 	"tillbox/internal/epay"
@@ -132,7 +133,7 @@ type Merchant struct {
 	ID      int64
 	Key     string
 	Priv    *rsa.PrivateKey // RSA 商户才有
-	Channel string          // 商户所用渠道的实例键
+	Channel string          // 商户第一种支付方式（一般是支付宝）走的渠道的实例键
 }
 
 // PID 返回字符串形式的商户号。
@@ -193,7 +194,15 @@ func (e *Env) NewMerchant(in *merchant.Input) *Merchant {
 	if err != nil {
 		e.T.Fatal(err)
 	}
-	return &Merchant{ID: m.ID, Key: key, Channel: store.ChannelKey(m.ChannelID)}
+	// Channel 记第一种支付方式（一般是支付宝）走的渠道
+	out := &Merchant{ID: m.ID, Key: key}
+	for _, t := range channel.TypeOrder {
+		if id := m.Routes[t]; id != 0 {
+			out.Channel = store.ChannelKey(id)
+			break
+		}
+	}
+	return out
 }
 
 // NewRSAMerchant 建一个带 RSA 公钥的商户。rsaOnly 为真时只收 RSA 签名。

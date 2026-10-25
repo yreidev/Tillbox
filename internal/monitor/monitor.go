@@ -239,7 +239,7 @@ func (s *Service) sample(ctx context.Context, kind string, now time.Time) (Messa
 	site := s.siteName(ctx)
 	tradeNo := now.In(epay.CST).Format("20060102150405") + "12345"
 	alert := &store.Alert{
-		Level: store.AlertCritical, Title: "示例渠道向上游查单连续失败 3 次", Detail: "上游返回：系统繁忙，请稍后再试",
+		Level: store.AlertCritical, Title: "示例渠道向第三方平台查单连续失败 3 次", Detail: "第三方平台返回：系统繁忙，请稍后再试",
 		Link: "/admin/channels", StartedAt: store.Ms(now),
 	}
 	switch kind {

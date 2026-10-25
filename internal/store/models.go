@@ -69,16 +69,26 @@ type Merchant struct {
 	KeyType      int    `bun:"key_type" json:"key_type"`
 	Domains      string `bun:"domains" json:"domains"` // 通知和回跳域名白名单，一行一个；空表示不限制
 	Enabled      bool   `bun:"enabled" json:"enabled"`
-	ChannelID    int64  `bun:"channel_id" json:"channel_id"` // 收款用的渠道；0 表示还没选
 	Remark       string `bun:"remark" json:"remark"`
 	CreatedAt    int64  `bun:"created_at" json:"created_at"`
 	UpdatedAt    int64  `bun:"updated_at" json:"updated_at"`
+	// Routes 是各支付方式走哪个渠道（支付方式 → 渠道编号），没开的方式不在里面。存在 merchant_routes 表。
+	Routes map[string]int64 `bun:"-" json:"routes"`
+}
+
+// MerchantRoute 是商户的一种支付方式走哪个渠道。没有这一行的方式就是没开。
+type MerchantRoute struct {
+	bun.BaseModel `bun:"table:merchant_routes"`
+
+	MerchantID int64  `bun:"merchant_id,pk"`
+	PayType    string `bun:"pay_type,pk"`
+	ChannelID  int64  `bun:"channel_id"`
 }
 
 // 渠道类型
 const (
 	ChannelAlipayQR = "alipay_qr" // 支付宝经营码：查账加金额尾数推断
-	ChannelEpay     = "epay"      // 上游易支付：预下单、回调、查单逐单确认
+	ChannelEpay     = "epay"      // 第三方易支付：预下单、回调、查单逐单确认
 	ChannelDemo     = "demo"      // 演示渠道：流水在内存里，只在 TILLBOX_DEMO=true 时可用
 )
 
@@ -115,22 +125,22 @@ func ChannelID(key string) int64 {
 	return id
 }
 
-// 上游付款信息类型
+// 第三方平台付款信息类型
 const (
 	InfoQRCode    = "qrcode"    // 在收银台画成二维码
-	InfoJump      = "jump"      // 跳转到上游付款页
+	InfoJump      = "jump"      // 跳转到第三方平台付款页
 	InfoURLScheme = "urlscheme" // 唤起 App 的链接
-	InfoSubmit    = "submit"    // 上游只给 HTML 表单：付款人点“去付款”时现签一个跳转地址
+	InfoSubmit    = "submit"    // 第三方平台只给 HTML 表单：付款人点“去付款”时现签一个跳转地址
 )
 
-// UpstreamPayment 是向上游易支付预下单的结果。
+// UpstreamPayment 是向第三方易支付预下单的结果。
 type UpstreamPayment struct {
 	bun.BaseModel `bun:"table:upstream_payments,alias:up"`
 
 	OrderID    int64  `bun:"order_id,pk" json:"order_id"`
 	ChannelID  int64  `bun:"channel_id" json:"channel_id"`
 	PayType    string `bun:"pay_type" json:"pay_type"`
-	TradeNo    string `bun:"trade_no" json:"trade_no"` // 上游订单号
+	TradeNo    string `bun:"trade_no" json:"trade_no"` // 第三方平台订单号
 	InfoType   string `bun:"info_type" json:"info_type"`
 	Info       string `bun:"info" json:"info"`
 	CheckedAt  int64  `bun:"checked_at" json:"checked_at"` // 上次查单的时刻
@@ -157,7 +167,7 @@ type Order struct {
 	OutTradeNo string `bun:"out_trade_no" json:"out_trade_no"`
 	Version    int    `bun:"version" json:"version"` // 1：V1 入口创建，通知用 MD5；2：V2 入口创建，通知用 RSA
 	IsTest     bool   `bun:"is_test" json:"is_test"`
-	Channel    string `bun:"channel" json:"channel"` // 渠道实例键 ch<编号>
+	Channel    string `bun:"channel" json:"channel"` // 渠道实例键 ch<编号>；空表示付款人还没在收银台选支付方式
 	PayType    string `bun:"pay_type" json:"pay_type"`
 	Name       string `bun:"name" json:"name"`
 	Money      string `bun:"money" json:"money"`           // 下单时收到的原始金额字符串，通知原样带回

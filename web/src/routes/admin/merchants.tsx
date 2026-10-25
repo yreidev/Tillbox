@@ -17,6 +17,7 @@ import { ApiError, api, channelsQuery, meQuery } from '../../lib/api'
 import { time } from '../../lib/format'
 import type { ChannelView, Merchant, MerchantInput, Settings } from '../../lib/types'
 import { channelTypeText, payTypeLabel } from '../../lib/types'
+import { defaultRoutes, payTypeOrder, routeList } from '../../lib/routes'
 import {
   ConfirmDialog,
   ConflictNotice,
@@ -60,7 +61,7 @@ const empty: MerchantInput = {
   key_type: 0,
   domains: '',
   enabled: true,
-  channel_id: 0,
+  routes: {},
   remark: '',
 }
 
@@ -70,7 +71,7 @@ const inputOf = (m: Merchant): MerchantInput => ({
   key_type: m.key_type,
   domains: m.domains,
   enabled: m.enabled,
-  channel_id: m.channel_id,
+  routes: m.routes ?? {},
   remark: m.remark,
 })
 
@@ -94,9 +95,13 @@ function MerchantsPage() {
     onError: toastError,
   })
   const toggle = useMutation({
-    // 带上列表里的修改时间：列表没刷新到别处的修改时不会把它改回去。
+    // 带上列表里的修改时间：列表没刷新到别处的修改时不会把它改回去。不传收款方式，保留原样。
     mutationFn: (m: Merchant) =>
-      api.put(`/web-api/admin/merchants/${m.id}`, { ...inputOf(m), enabled: !m.enabled }, { revision: m.updated_at }),
+      api.put(
+        `/web-api/admin/merchants/${m.id}`,
+        { ...inputOf(m), routes: undefined, enabled: !m.enabled },
+        { revision: m.updated_at },
+      ),
     onSuccess: (_d, m) => {
       toastOK(m.enabled ? '已停用，这个商户下不了新单' : '已启用')
       void refresh()
@@ -109,7 +114,6 @@ function MerchantsPage() {
     },
   })
   const rows = q.data?.items ?? []
-  const channelOf = (m: Merchant) => channels.find((c) => c.id === m.channel_id)
 
   const actions = (r: Row) => (
     <div className="flex items-center justify-end gap-1">
@@ -156,7 +160,7 @@ function MerchantsPage() {
       />
       {ch.isSuccess && channels.length === 0 && (
         <Notice status="warning" title="还没有支付渠道">
-          商户要选一个渠道才能收款，先到 <RouterLink to="/admin/channels">支付渠道</RouterLink> 页新建。
+          商户的每种支付方式都要选一个渠道才能收款，先到 <RouterLink to="/admin/channels">支付渠道</RouterLink> 页新建。
         </Notice>
       )}
       {q.isError && <Notice status="danger">{q.error.message}</Notice>}
@@ -192,7 +196,7 @@ function MerchantsPage() {
                   </span>
                   <span className="tb-num shrink-0 text-xs text-muted">商户号 {m.id}</span>
                 </div>
-                <ChannelLine c={channelOf(m)} />
+                <Routes m={m} channels={channels} />
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-xs text-muted">
                     <span className="tb-num">{r.orders}</span> 笔订单
@@ -223,7 +227,7 @@ function MerchantsPage() {
                 />
               ),
             },
-            { title: '支付渠道', render: (r) => <ChannelLine c={channelOf(r.merchant)} stacked /> },
+            { title: '收款方式', render: (r) => <Routes m={r.merchant} channels={channels} /> },
             {
               title: '签名',
               nowrap: true,
@@ -382,20 +386,20 @@ function RowMenu({ row, onAction }: { row: Row; onAction: (k: 'toggle' | 'reset'
   )
 }
 
-// ChannelLine 是商户所用渠道和它的状态；渠道有问题时标红，提醒这个商户收不了款。
-function ChannelLine({ c, stacked }: { c?: ChannelView; stacked?: boolean }) {
-  if (!c) return <Pill tone="danger">没选渠道</Pill>
-  const bad = !c.enabled ? '渠道已停用' : c.problem ? '渠道不能收款' : ''
-  const sub = bad || (c.pay_types ?? []).map(payTypeLabel).join('、')
-  if (stacked)
-    return (
-      <Stack className="max-w-48" main={c.name} sub={<span className={bad ? 'text-danger' : undefined}>{sub}</span>} />
-    )
+// Routes 是商户开放的支付方式和各自走的渠道；收不了款的标红并说明原因。
+function Routes({ m, channels }: { m: Merchant; channels: ChannelView[] }) {
+  const list = routeList(m.routes, channels)
+  if (!list.length) return <Pill tone="danger">没开收款方式</Pill>
   return (
-    <span className="truncate text-xs text-muted">
-      {c.name}
-      {sub && <span className={bad ? 'text-danger' : undefined}> · {sub}</span>}
-    </span>
+    <ul className="flex max-w-64 flex-col gap-0.5 text-xs">
+      {list.map((r) => (
+        <li key={r.type} className="truncate" title={r.problem || undefined}>
+          <span className="font-medium">{r.label}</span>
+          <span className="text-muted"> · {r.channel?.name ?? '已删除的渠道'}</span>
+          {r.problem && <span className="text-danger"> · {r.problem}</span>}
+        </li>
+      ))}
+    </ul>
   )
 }
 
@@ -453,8 +457,9 @@ function EditForm({
   const formId = useId()
   const [busy, setBusy] = useState(false)
   const isNew = target === 'new'
-  const firstEnabled = channels.find((c) => c.enabled)?.id ?? channels[0]?.id ?? 0
-  const [v, setV] = useState<MerchantInput>(() => (isNew ? { ...empty, channel_id: firstEnabled } : inputOf(target)))
+  const [v, setV] = useState<MerchantInput>(() =>
+    isNew ? { ...empty, routes: defaultRoutes(channels) } : inputOf(target),
+  )
   const set = <K extends keyof MerchantInput>(k: K, x: MerchantInput[K]) => setV((s) => ({ ...s, [k]: x }))
   // target 是列表里最新的商户：表单没改过时跟着它的修改时间走，改过后在别处又改了就提示冲突。
   const rev = useRevision(
@@ -514,22 +519,11 @@ function EditForm({
               onChange={(x) => set('enabled', x)}
             />
           </Section>
-          <Section title="收款">
-            <SelectInput<number>
-              label="支付渠道"
-              isRequired
-              value={v.channel_id || undefined}
-              onChange={(x) => set('channel_id', x ?? 0)}
-              description={
-                channels.length
-                  ? '这个商户的新订单走所选渠道；改渠道不影响已经下的单。'
-                  : '还没有支付渠道，请先到「支付渠道」页新建。'
-              }
-              options={channels.map((c) => ({
-                value: c.id,
-                label: `${c.name}（${channelTypeText[c.type] ?? c.type}${c.enabled ? '' : '，已停用'}）`,
-              }))}
-            />
+          <Section title="收款方式">
+            <Typography.Paragraph size="sm" color="muted">
+              每种支付方式选一个渠道。调用方下单带了支付方式就走对应的渠道；没带、又开了几种时，付款人在收银台自己选，选定后不能换，只能取消订单。改了只影响之后的新订单。
+            </Typography.Paragraph>
+            <RoutesInput routes={v.routes ?? {}} channels={channels} onChange={(x) => set('routes', x)} />
           </Section>
           <Section title="签名">
             <RadioInput
@@ -590,6 +584,53 @@ function EditForm({
   )
 }
 
+// RoutesInput 是每种支付方式选渠道的下拉框。只列有渠道开放的方式；已经选了、渠道后来不再开放的也列出来，标红让管理员改。
+function RoutesInput({
+  routes,
+  channels,
+  onChange,
+}: {
+  routes: Record<string, number>
+  channels: ChannelView[]
+  onChange: (routes: Record<string, number>) => void
+}) {
+  if (!channels.length)
+    return (
+      <Typography.Paragraph size="sm" color="muted">
+        还没有支付渠道，请先到「支付渠道」页新建。
+      </Typography.Paragraph>
+    )
+  const problems = Object.fromEntries(routeList(routes, channels).map((r) => [r.type, r.problem]))
+  const types = payTypeOrder.filter((t) => routes[t] || channels.some((c) => (c.pay_types ?? []).includes(t)))
+  const label = (c: ChannelView) => `${c.name}（${channelTypeText[c.type] ?? c.type}${c.enabled ? '' : '，已停用'}）`
+  return (
+    <>
+      {types.map((t) => {
+        const cur = routes[t] ?? 0
+        const options = [
+          { value: 0, label: '不开' },
+          ...channels.filter((c) => (c.pay_types ?? []).includes(t)).map((c) => ({ value: c.id, label: label(c) })),
+        ]
+        if (cur && !options.some((o) => o.value === cur)) {
+          const c = channels.find((x) => x.id === cur)
+          options.push({ value: cur, label: c ? label(c) : `已删除的渠道（${cur}）` })
+        }
+        return (
+          <SelectInput<number>
+            key={t}
+            label={payTypeLabel(t)}
+            value={cur}
+            onChange={(x) => onChange({ ...routes, [t]: x ?? 0 })}
+            options={options}
+            description={problems[t] ? <span className="text-danger">收不了款：{problems[t]}</span> : undefined}
+          />
+        )
+      })}
+      {!types.some((t) => routes[t]) && <Notice status="warning">一种支付方式都没开，这个商户下不了单。</Notice>}
+    </>
+  )
+}
+
 function SecretModal({ secret, onClose }: { secret: Secret | null; onClose: () => void }) {
   const settings = useQuery({
     queryKey: ['settings'],
@@ -619,6 +660,15 @@ function SecretModal({ secret, onClose }: { secret: Secret | null; onClose: () =
           <Desc
             data={[
               { key: '接口地址', value: <Copyable text={apiURL} mono /> },
+              {
+                key: '开放的支付方式（type）',
+                value: (() => {
+                  const open = payTypeOrder.filter((t) => secret.merchant.routes?.[t])
+                  return open.length
+                    ? open.map((t) => `${payTypeLabel(t)} ${t}`).join('、')
+                    : '还没开，先在编辑商户里选好收款方式'
+                })(),
+              },
               { key: '商户号（pid）', value: <Copyable text={String(secret.merchant.id)} mono /> },
               { key: 'MD5 密钥（key）', value: <Copyable text={secret.key} mono /> },
               {
@@ -636,7 +686,7 @@ function SecretModal({ secret, onClose }: { secret: Secret | null; onClose: () =
           <Surface variant="secondary" className="rounded-xl px-3 py-2.5">
             <Typography.Paragraph size="xs" color="muted">
               调用方按易支付接入：支付地址填接口地址，商户 ID 填商户号，密钥填 MD5
-              密钥，支付方式填商户所用渠道开放的方式（经营码渠道只有支付宝 alipay）。
+              密钥，支付方式填上面开放的方式；不填时，只开了一种就用它，开了几种由付款人在收银台选。
             </Typography.Paragraph>
           </Surface>
         </div>

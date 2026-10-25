@@ -146,29 +146,33 @@ func TestChannelsAPI(t *testing.T) {
 	expect(t, update(second.ID, "经营码 C", false, ok), http.StatusBadRequest, "已经用在渠道「经营码 B」上")
 	expect(t, a.Call("DELETE", fmt.Sprintf("/web-api/admin/channels/%d", second.ID), nil), http.StatusOK, "")
 
-	// 商户选渠道：新建默认第一个启用的渠道；可以改，不存在的渠道拒绝。
+	// 商户按支付方式选渠道：新建默认第一个启用、开放了这种方式的渠道；可以改，不存在的渠道、没开放这种方式的渠道拒绝。
 	m := e.NewMerchant(nil)
 	if m.Channel != e.ChannelKey() {
 		t.Errorf("新商户默认渠道 %s", m.Channel)
 	}
-	expect(t, a.Call("PUT", fmt.Sprintf("/web-api/admin/merchants/%d", m.ID), merchant.Input{Name: "x", Enabled: true, ChannelID: 999}), http.StatusBadRequest, "所选的支付渠道不存在")
-	expect(t, a.Call("PUT", fmt.Sprintf("/web-api/admin/merchants/%d", m.ID), merchant.Input{Name: "x", Enabled: true, ChannelID: ali.ID}), http.StatusOK, "")
-	// 没传渠道时保留原渠道。
-	expect(t, a.Call("PUT", fmt.Sprintf("/web-api/admin/merchants/%d", m.ID), merchant.Input{Name: "x", Enabled: true}), http.StatusOK, "")
-	if got, _ := e.App.Merchants.Get(e.Ctx, m.ID); got.ChannelID != ali.ID {
-		t.Errorf("商户渠道应为 %d，实际 %d", ali.ID, got.ChannelID)
+	alipay := func(id int64) map[string]int64 { return map[string]int64{"alipay": id} }
+	mpath := fmt.Sprintf("/web-api/admin/merchants/%d", m.ID)
+	expect(t, a.Call("PUT", mpath, merchant.Input{Name: "x", Enabled: true, Routes: alipay(999)}), http.StatusBadRequest, "渠道不存在")
+	expect(t, a.Call("PUT", mpath, merchant.Input{Name: "x", Enabled: true, Routes: map[string]int64{"wxpay": ali.ID}}), http.StatusBadRequest, "没有开放微信支付")
+	expect(t, a.Call("PUT", mpath, merchant.Input{Name: "x", Enabled: true, Routes: map[string]int64{"nope": ali.ID}}), http.StatusBadRequest, "不认识的支付方式")
+	expect(t, a.Call("PUT", mpath, merchant.Input{Name: "x", Enabled: true, Routes: alipay(ali.ID)}), http.StatusOK, "")
+	// 没传收款方式时保留原样。
+	expect(t, a.Call("PUT", mpath, merchant.Input{Name: "x", Enabled: true}), http.StatusOK, "")
+	if got, _ := e.App.Merchants.Get(e.Ctx, m.ID); got.Routes["alipay"] != ali.ID || len(got.Routes) != 1 {
+		t.Errorf("商户的收款方式应为支付宝走 %d，实际 %v", ali.ID, got.Routes)
 	}
 	if v = channels(t, a)[ali.ID]; v.Merchants != 1 {
 		t.Errorf("渠道的商户数：%+v", v)
 	}
 
-	// 停用商户所用的渠道后，下单报通道不可用；换回演示渠道后可以下单，订单记在演示渠道名下。
+	// 停用商户支付宝走的渠道后，下单报通道不可用；换回演示渠道后可以下单，订单记在演示渠道名下。
 	expect(t, update(ali.ID, "经营码 B", false, ok), http.StatusOK, "")
 	res2 := e.PostForm("/mapi.php", m.SignMD5(map[string]string{"type": "alipay", "out_trade_no": "C1", "notify_url": e.Hook.URL + "/n", "name": "x", "money": "1", "clientip": "1.1.1.1"})).JSON(t)
 	if fmt.Sprint(res2["code"]) != "-2" || !strings.Contains(fmt.Sprint(res2["msg"]), "支付通道暂时不可用") {
 		t.Errorf("渠道停用时下单：%v", res2)
 	}
-	expect(t, a.Call("PUT", fmt.Sprintf("/web-api/admin/merchants/%d", m.ID), merchant.Input{Name: "x", Enabled: true, ChannelID: demoID}), http.StatusOK, "")
+	expect(t, a.Call("PUT", mpath, merchant.Input{Name: "x", Enabled: true, Routes: alipay(demoID)}), http.StatusOK, "")
 	tn := order(t, e, m, "C2", "1", "x")
 	if o := e.Order(tn); o.Channel != e.ChannelKey() {
 		t.Errorf("订单渠道 %s", o.Channel)
@@ -186,9 +190,9 @@ func TestChannelsAPI(t *testing.T) {
 		}
 	}
 	blocked(demoID, "已经有订单")
-	expect(t, a.Call("PUT", fmt.Sprintf("/web-api/admin/merchants/%d", m.ID), merchant.Input{Name: "x", Enabled: true, ChannelID: ali.ID}), http.StatusOK, "")
+	expect(t, a.Call("PUT", mpath, merchant.Input{Name: "x", Enabled: true, Routes: alipay(ali.ID)}), http.StatusOK, "")
 	blocked(ali.ID, "还有 1 个商户在用")
-	expect(t, a.Call("PUT", fmt.Sprintf("/web-api/admin/merchants/%d", m.ID), merchant.Input{Name: "x", Enabled: true, ChannelID: demoID}), http.StatusOK, "")
+	expect(t, a.Call("PUT", mpath, merchant.Input{Name: "x", Enabled: true, Routes: alipay(demoID)}), http.StatusOK, "")
 	blocked(ali.ID, "")
 	txn := &store.Transaction{Channel: ali.Key(), ExternalID: "T1", Direction: store.DirIn, Amount: 100, State: store.TxnNew}
 	if _, err := e.DB().NewInsert().Model(txn).Exec(e.Ctx); err != nil {

@@ -9,14 +9,19 @@ import (
 	"slices"
 	"time"
 
+	"github.com/uptrace/bun"
+
+	"tillbox/internal/assistance"
 	"tillbox/internal/channel"
 	"tillbox/internal/channel/fake"
 	"tillbox/internal/channel/registry"
 	"tillbox/internal/confirm"
 	"tillbox/internal/epay"
 	"tillbox/internal/ledger"
+	"tillbox/internal/merchant"
 	"tillbox/internal/notify"
 	"tillbox/internal/order"
+	"tillbox/internal/payroute"
 	"tillbox/internal/settings"
 	"tillbox/internal/store"
 )
@@ -27,13 +32,17 @@ const ReturnWindow = 5 * time.Minute
 var tradeNoRe = regexp.MustCompile(`^[0-9]{19}$`)
 
 type cashier struct {
-	orders   *order.Service
-	settings *settings.Service
-	channels *registry.Registry
-	pollers  *ledger.Pollers
-	confirm  *confirm.Service
-	signer   *notify.Signer
-	baseURL  func(r *http.Request) string
+	orders    *order.Service
+	merchants *merchant.Service
+	settings  *settings.Service
+	channels  *registry.Registry
+	pollers   *ledger.Pollers
+	confirm   *confirm.Service
+	signer    *notify.Signer
+	db        *bun.DB
+	baseURL   func(r *http.Request) string
+	clientIP  func(r *http.Request) string
+	limiter   assistance.Limiter // 取消订单按 IP 限次数
 }
 
 func (c *cashier) register(mux *http.ServeMux) {
@@ -41,6 +50,7 @@ func (c *cashier) register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /web-api/cashier/{trade_no}/paid", c.paid)
 	mux.HandleFunc("POST /web-api/cashier/{trade_no}/pay", c.pay)
 	mux.HandleFunc("POST /web-api/cashier/{trade_no}/go", c.goPay)
+	mux.HandleFunc("POST /web-api/cashier/{trade_no}/cancel", c.cancel)
 	mux.HandleFunc("GET /web-api/cashier/{trade_no}/return", c.returnURL)
 }
 
@@ -92,7 +102,10 @@ func (c *cashier) get(w http.ResponseWriter, r *http.Request) {
 		"has_return":  o.ReturnURL != "" && state == store.OrderPaid && now.Sub(store.Time(o.PaidAt)) <= ReturnWindow,
 	}
 	if state == store.OrderPending {
-		if cf, _ := c.confirm.Confirmer(o.Channel); cf != nil {
+		cf, _ := c.confirm.Confirmer(o.Channel)
+		if o.Channel == "" {
+			c.chooseOptions(r, o, res)
+		} else if cf != nil {
 			c.upstreamGuide(r, o, cf, res)
 		} else if ch, _, ok := c.channels.ByKey(o.Channel); !ok {
 			slog.Error("订单的收款渠道不存在", "trade_no", o.TradeNo, "channel", o.Channel)
@@ -112,9 +125,34 @@ type payType struct {
 	Unavailable string `json:"unavailable,omitempty"`
 }
 
-// upstreamGuide 给上游渠道的订单补上可选的支付方式；已经向上游预下单的，给出付款信息。
+// chooseOptions 给付款人还没选支付方式的订单列出商户开放的方式。收不了款的方式标成暂时不可用，不说原因。
+func (c *cashier) chooseOptions(r *http.Request, o *store.Order, res map[string]any) {
+	m, err := c.merchants.Get(r.Context(), o.MerchantID)
+	if err != nil {
+		slog.Error("收银台读取商户失败", "trade_no", o.TradeNo, "err", err)
+		return
+	}
+	methods := payroute.Methods(r.Context(), c.channels, m.Routes)
+	opts := make([]payType, len(methods))
+	for i, mt := range methods {
+		opts[i] = payType{Type: mt.Type, Label: channel.TypeLabel(mt.Type)}
+		var ae *channel.AmountError
+		if !mt.Ready() {
+			opts[i].Unavailable = "暂时不可用"
+		} else if errors.As(mt.CheckAmount(o.Amount, time.Now()), &ae) {
+			opts[i].Unavailable = ae.Rule()
+		}
+	}
+	res["pay_types"], res["pay_type"] = opts, ""
+}
+
+// upstreamGuide 给第三方易支付渠道的订单补上支付方式：定了方式的只有这一种（预下单失败时可以重试），
+// 升级前建的还没定方式的列出渠道开放的方式。已经预下单的给出付款信息。
 func (c *cashier) upstreamGuide(r *http.Request, o *store.Order, cf channel.Confirmer, res map[string]any) {
 	types := cf.PayTypes()
+	if o.PayType != "" {
+		types = []string{o.PayType}
+	}
 	opts := make([]payType, len(types))
 	l, _ := cf.(channel.Limiter)
 	for i, t := range types {
@@ -148,7 +186,8 @@ func upstreamGuide(up *store.UpstreamPayment) channel.Guide {
 	return g
 }
 
-// pay 是付款人在收银台选了支付方式：向上游预下单，返回付款信息。
+// pay 是付款人在收银台选了支付方式：定下订单的渠道（经营码当场分配金额尾数），第三方易支付接着预下单，
+// 返回付款信息。选定后不能再换，只能取消订单。
 func (c *cashier) pay(w http.ResponseWriter, r *http.Request) {
 	o := c.load(w, r)
 	if o == nil {
@@ -161,33 +200,127 @@ func (c *cashier) pay(w http.ResponseWriter, r *http.Request) {
 		jsonOut(w, http.StatusBadRequest, map[string]string{"error": "请选择支付方式"})
 		return
 	}
-	cf, _ := c.confirm.Confirmer(o.Channel)
-	if cf == nil {
-		jsonOut(w, http.StatusBadRequest, map[string]string{"error": "这个订单不用选择支付方式"})
-		return
-	} else if !slices.Contains(cf.PayTypes(), in.Type) {
-		jsonOut(w, http.StatusBadRequest, map[string]string{"error": "不支持这种支付方式"})
+	if order.Effective(o, time.Now()) != store.OrderPending {
+		jsonOut(w, http.StatusConflict, map[string]string{"error": "订单已经不是待支付状态，请刷新页面"})
 		return
 	}
-	up, err := c.confirm.Prepare(r.Context(), o, in.Type, c.baseURL(r))
+	undecided := o.Channel == ""
+	var mt payroute.Method
+	if undecided {
+		m, err := c.merchants.Get(r.Context(), o.MerchantID)
+		if err != nil {
+			slog.Error("收银台读取商户失败", "trade_no", o.TradeNo, "err", err)
+			jsonOut(w, http.StatusInternalServerError, map[string]string{"error": "系统繁忙，请稍后重试"})
+			return
+		}
+		var ok bool
+		if mt, ok = payroute.Find(payroute.Methods(r.Context(), c.channels, m.Routes), in.Type); !ok {
+			jsonOut(w, http.StatusBadRequest, map[string]string{"error": "不支持这种支付方式"})
+			return
+		}
+		if !mt.Ready() {
+			jsonOut(w, http.StatusConflict, map[string]string{"error": "这种支付方式暂时不可用，请换一种"})
+			return
+		}
+	} else {
+		var ok bool
+		if mt, ok = payroute.Of(c.channels, o, in.Type); !ok {
+			jsonOut(w, http.StatusBadRequest, map[string]string{"error": "不支持这种支付方式"})
+			return
+		}
+		if !slices.Contains(mt.Channel.PayTypes(), in.Type) {
+			err := errUnsupportedType
+			if o.PayType != "" {
+				err = order.ErrChosen
+			}
+			c.payFailed(w, o, in.Type, false, err)
+			return
+		}
+	}
+	up, err := payroute.Choose(r.Context(), c.orders, c.confirm, o, mt, c.baseURL(r))
+	if err != nil {
+		c.payFailed(w, o, in.Type, undecided, err)
+		return
+	}
+	res := map[string]any{"pay_type": o.PayType, "pay_amount": epay.FormatCents(o.PayAmount)}
+	if up != nil {
+		res["guide"] = upstreamGuide(up)
+	} else if g, err := mt.Channel.Guide(r.Context(), o); err != nil {
+		slog.Error("读取收款指引失败", "trade_no", o.TradeNo, "channel", o.Channel, "err", err)
+	} else {
+		res["guide"] = g
+	}
+	jsonOut(w, http.StatusOK, res)
+}
+
+var errUnsupportedType = errors.New("不支持这种支付方式")
+
+// payFailed 回复选支付方式失败的原因。undecided 是付款人选之前订单还没定方式：这时失败了还能换一种。
+func (c *cashier) payFailed(w http.ResponseWriter, o *store.Order, typ string, undecided bool, err error) {
 	var ae *channel.AmountError
+	var full *order.PoolFullError
 	switch {
-	case errors.Is(err, confirm.ErrNotPending):
+	case errors.Is(err, errUnsupportedType):
+		jsonOut(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+	case errors.Is(err, order.ErrNotPending):
 		jsonOut(w, http.StatusConflict, map[string]string{"error": "订单已经不是待支付状态，请刷新页面"})
+	case errors.Is(err, order.ErrChosen):
+		chosen := "支付方式"
+		if o.PayType != "" {
+			chosen = channel.TypeLabel(o.PayType)
+		}
+		jsonOut(w, http.StatusConflict, map[string]string{"error": "已经选了" + chosen + "，不能再换；要换支付方式请取消订单，回到商户重新下单"})
 	case errors.As(err, &ae):
 		msg := ae.Message()
-		if len(cf.PayTypes()) > 1 {
+		if undecided {
 			msg += "，请换一种支付方式"
 		}
 		jsonOut(w, http.StatusUnprocessableEntity, map[string]string{"error": msg})
-	case err != nil:
-		jsonOut(w, http.StatusBadGateway, map[string]string{"error": "支付通道暂时不可用，请稍后重试或换一种支付方式"})
+	case errors.As(err, &full):
+		jsonOut(w, http.StatusConflict, map[string]string{"error": err.Error()})
 	default:
-		jsonOut(w, http.StatusOK, map[string]any{"guide": upstreamGuide(up), "pay_type": up.PayType})
+		slog.Warn("收银台选支付方式失败", "trade_no", o.TradeNo, "type", typ, "err", err)
+		msg := "支付通道暂时不可用，请稍后重试"
+		if undecided {
+			// 预下单失败时选择已经撤回，付款人可以换一种
+			msg = "支付通道暂时不可用，请换一种支付方式或稍后重试"
+		}
+		jsonOut(w, http.StatusBadGateway, map[string]string{"error": msg})
 	}
 }
 
-// goPay 给“去付款”按钮一个地址：上游只给 HTML 表单时现签一个跳转地址，其余用预下单拿到的链接。
+// cancel 是付款人在收银台取消待支付的订单（要换支付方式只能这样）。取消后再付的款进流水异常，人工核对。
+func (c *cashier) cancel(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("X-Tillbox") == "" {
+		jsonOut(w, http.StatusForbidden, map[string]string{"error": "请在收银台页面操作"})
+		return
+	}
+	if !c.limiter.Allow("cashier-cancel:"+c.clientIP(r), 20) {
+		jsonOut(w, http.StatusTooManyRequests, map[string]string{"error": "操作过于频繁，请稍后再试"})
+		return
+	}
+	o := c.load(w, r)
+	if o == nil {
+		return
+	}
+	pending := order.Effective(o, time.Now()) == store.OrderPending
+	closed, err := c.orders.Close(r.Context(), o.ID)
+	if errors.Is(err, order.ErrCannotClose) {
+		jsonOut(w, http.StatusConflict, map[string]string{"error": "订单已经不是待支付状态，请刷新页面"})
+		return
+	}
+	if err != nil {
+		slog.Error("付款人取消订单失败", "trade_no", o.TradeNo, "err", err)
+		jsonOut(w, http.StatusInternalServerError, map[string]string{"error": "取消失败，请稍后重试"})
+		return
+	}
+	if pending {
+		_ = store.Audit(r.Context(), c.db, "付款人", "order.cancel", o.TradeNo, "在收银台取消了订单")
+	}
+	jsonOut(w, http.StatusOK, map[string]any{"state": closed.Status})
+}
+
+// goPay 给“去付款”按钮一个地址：第三方平台只给 HTML 表单时现签一个跳转地址，其余用预下单拿到的链接。
 func (c *cashier) goPay(w http.ResponseWriter, r *http.Request) {
 	o := c.load(w, r)
 	if o == nil {
@@ -209,14 +342,14 @@ func (c *cashier) goPay(w http.ResponseWriter, r *http.Request) {
 	}
 	u, err := cf.SubmitURL(r.Context(), o, c.baseURL(r))
 	if err != nil {
-		slog.Error("生成上游跳转地址失败", "trade_no", o.TradeNo, "err", err)
+		slog.Error("生成第三方平台跳转地址失败", "trade_no", o.TradeNo, "err", err)
 		jsonOut(w, http.StatusBadGateway, map[string]string{"error": "支付通道暂时不可用，请稍后重试"})
 		return
 	}
 	jsonOut(w, http.StatusOK, map[string]any{"url": u})
 }
 
-// paid 是付款人点了"我已付款"：请求尽快查一轮账（上游渠道是查一次这个订单）。
+// paid 是付款人点了"我已付款"：请求尽快查一轮账（第三方易支付渠道是查一次这个订单）。
 func (c *cashier) paid(w http.ResponseWriter, r *http.Request) {
 	o := c.load(w, r)
 	if o == nil {

@@ -9,10 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/uptrace/bun"
 
+	"tillbox/internal/channel"
 	"tillbox/internal/epay"
 	"tillbox/internal/secret"
 	"tillbox/internal/store"
@@ -30,13 +32,108 @@ type Merchant struct {
 	PublicKey *rsa.PublicKey // 解析好的 RSA 公钥，没有为 nil
 }
 
+// Channels 是给商户选渠道时要用的渠道信息，由渠道注册表提供。
+type Channels interface {
+	List() []store.Channel
+	PayTypes(id int64) ([]string, bool)
+}
+
 type Service struct {
 	db  *bun.DB
 	box *secret.Box
+	// Channels 在渠道注册表建好后设置。
+	Channels Channels
 }
 
 func New(db *bun.DB, box *secret.Box) *Service {
 	return &Service{db: db, box: box}
+}
+
+// loadRoutes 给商户填上各支付方式走的渠道。
+func (s *Service) loadRoutes(ctx context.Context, ms []store.Merchant) error {
+	if len(ms) == 0 {
+		return nil
+	}
+	q := s.db.NewSelect().Model((*store.MerchantRoute)(nil))
+	if len(ms) == 1 {
+		q = q.Where("merchant_id = ?", ms[0].ID)
+	}
+	var rs []store.MerchantRoute
+	if err := q.Scan(ctx, &rs); err != nil {
+		return err
+	}
+	byID := make(map[int64]*store.Merchant, len(ms))
+	for i := range ms {
+		ms[i].Routes = map[string]int64{}
+		byID[ms[i].ID] = &ms[i]
+	}
+	for _, r := range rs {
+		if m := byID[r.MerchantID]; m != nil {
+			m.Routes[r.PayType] = r.ChannelID
+		}
+	}
+	return nil
+}
+
+// saveRoutes 在事务里换掉商户的收款方式。
+func saveRoutes(ctx context.Context, tx bun.Tx, id int64, routes map[string]int64) error {
+	if _, err := tx.NewDelete().Model((*store.MerchantRoute)(nil)).Where("merchant_id = ?", id).Exec(ctx); err != nil {
+		return err
+	}
+	rows := make([]store.MerchantRoute, 0, len(routes))
+	for _, t := range channel.TypeOrder {
+		if ch := routes[t]; ch != 0 {
+			rows = append(rows, store.MerchantRoute{MerchantID: id, PayType: t, ChannelID: ch})
+		}
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	_, err := tx.NewInsert().Model(&rows).Exec(ctx)
+	return err
+}
+
+// DefaultRoutes 是新建商户默认的收款方式：每种方式走第一个启用、并且开放了这种方式的渠道。
+func (s *Service) DefaultRoutes() map[string]int64 {
+	out := map[string]int64{}
+	for _, c := range s.Channels.List() {
+		if !c.Enabled {
+			continue
+		}
+		types, _ := s.Channels.PayTypes(c.ID)
+		for _, t := range types {
+			if out[t] == 0 && channel.TypeNames[t] != "" {
+				out[t] = c.ID
+			}
+		}
+	}
+	return out
+}
+
+// checkRoutes 检查收款方式：认识的支付方式、渠道存在并且开放了这种方式。渠道编号是 0 的方式算没开，去掉。
+func (s *Service) checkRoutes(routes map[string]int64) (map[string]int64, error) {
+	names := map[int64]string{}
+	for _, c := range s.Channels.List() {
+		names[c.ID] = c.Name
+	}
+	out := map[string]int64{}
+	for t, id := range routes {
+		if id == 0 {
+			continue
+		}
+		if channel.TypeNames[t] == "" {
+			return nil, fmt.Errorf("不认识的支付方式 %q", t)
+		}
+		types, ok := s.Channels.PayTypes(id)
+		if !ok {
+			return nil, fmt.Errorf("渠道不存在：%s要换一个渠道", channel.TypeLabel(t))
+		}
+		if !slices.Contains(types, t) {
+			return nil, fmt.Errorf("渠道「%s」没有开放%s", names[id], channel.TypeLabel(t))
+		}
+		out[t] = id
+	}
+	return out, nil
 }
 
 func (s *Service) decode(m *store.Merchant) (*Merchant, error) {
@@ -65,13 +162,19 @@ func (s *Service) Get(ctx context.Context, id int64) (*Merchant, error) {
 	if err != nil {
 		return nil, err
 	}
-	return s.decode(&m)
+	ms := []store.Merchant{m}
+	if err := s.loadRoutes(ctx, ms); err != nil {
+		return nil, err
+	}
+	return s.decode(&ms[0])
 }
 
 func (s *Service) List(ctx context.Context) ([]store.Merchant, error) {
 	var ms []store.Merchant
-	err := s.db.NewSelect().Model(&ms).Order("id ASC").Scan(ctx)
-	return ms, err
+	if err := s.db.NewSelect().Model(&ms).Order("id ASC").Scan(ctx); err != nil {
+		return nil, err
+	}
+	return ms, s.loadRoutes(ctx, ms)
 }
 
 // Input 是新建或修改商户时可改的字段。
@@ -81,28 +184,9 @@ type Input struct {
 	KeyType      int    `json:"key_type"`
 	Domains      string `json:"domains"`
 	Enabled      bool   `json:"enabled"`
-	ChannelID    int64  `json:"channel_id"` // 0：新建时用第一个启用的渠道，修改时保留原渠道
 	Remark       string `json:"remark"`
-}
-
-// channelFor 检查商户要用的渠道存在；没指定时新建商户用第一个启用的渠道（没有就用第一个渠道）。
-func (s *Service) channelFor(ctx context.Context, id int64) (int64, error) {
-	if id != 0 {
-		ok, err := s.db.NewSelect().Model((*store.Channel)(nil)).Where("id = ?", id).Exists(ctx)
-		if err != nil {
-			return 0, err
-		}
-		if !ok {
-			return 0, errors.New("所选的支付渠道不存在")
-		}
-		return id, nil
-	}
-	var ids []int64
-	err := s.db.NewSelect().Model((*store.Channel)(nil)).Column("id").OrderExpr("enabled DESC, id ASC").Limit(1).Scan(ctx, &ids)
-	if err != nil || len(ids) == 0 {
-		return 0, err
-	}
-	return ids[0], nil
+	// Routes 是各支付方式走的渠道。不传时新建商户用 DefaultRoutes，修改时保留原样；渠道编号是 0 的方式算没开。
+	Routes map[string]int64 `json:"routes"`
 }
 
 func (in *Input) normalize() error {
@@ -196,9 +280,12 @@ func (s *Service) Create(ctx context.Context, in Input) (*store.Merchant, string
 	if err := in.normalize(); err != nil {
 		return nil, "", err
 	}
-	chID, err := s.channelFor(ctx, in.ChannelID)
-	if err != nil {
-		return nil, "", err
+	routes := s.DefaultRoutes()
+	if in.Routes != nil {
+		var err error
+		if routes, err = s.checkRoutes(in.Routes); err != nil {
+			return nil, "", err
+		}
 	}
 	key := NewKey()
 	sealed, err := s.box.Seal(key)
@@ -208,7 +295,7 @@ func (s *Service) Create(ctx context.Context, in Input) (*store.Merchant, string
 	now := store.Now()
 	m := &store.Merchant{
 		Name: in.Name, MD5Key: sealed, RSAPublicKey: in.RSAPublicKey, KeyType: in.KeyType,
-		Domains: in.Domains, Enabled: in.Enabled, ChannelID: chID, Remark: in.Remark, CreatedAt: now, UpdatedAt: now,
+		Domains: in.Domains, Enabled: in.Enabled, Remark: in.Remark, CreatedAt: now, UpdatedAt: now, Routes: routes,
 	}
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		var maxID sql.NullInt64
@@ -216,8 +303,10 @@ func (s *Service) Create(ctx context.Context, in Input) (*store.Merchant, string
 			return err
 		}
 		m.ID = max(maxID.Int64+1, FirstID)
-		_, err := tx.NewInsert().Model(m).Exec(ctx)
-		return err
+		if _, err := tx.NewInsert().Model(m).Exec(ctx); err != nil {
+			return err
+		}
+		return saveRoutes(ctx, tx, m.ID, routes)
 	})
 	if err != nil {
 		return nil, "", err
@@ -231,18 +320,19 @@ func (s *Service) Update(ctx context.Context, id int64, in Input, expected int64
 	if err := in.normalize(); err != nil {
 		return nil, err
 	}
+	var routes map[string]int64
+	if in.Routes != nil {
+		var err error
+		if routes, err = s.checkRoutes(in.Routes); err != nil {
+			return nil, err
+		}
+	}
 	var m store.Merchant
 	if err := s.db.NewSelect().Model(&m).Where("id = ?", id).Scan(ctx); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
-	}
-	if in.ChannelID != 0 && in.ChannelID != m.ChannelID {
-		if _, err := s.channelFor(ctx, in.ChannelID); err != nil {
-			return nil, err
-		}
-		m.ChannelID = in.ChannelID
 	}
 	m.Name, m.RSAPublicKey, m.KeyType = in.Name, in.RSAPublicKey, in.KeyType
 	m.Domains, m.Enabled, m.Remark = in.Domains, in.Enabled, in.Remark
@@ -252,16 +342,29 @@ func (s *Service) Update(ctx context.Context, id int64, in Input, expected int64
 	}
 	m.UpdatedAt = store.Revise(old)
 	// 只在修改时间还是刚才读到的值时更新，读和写之间被别人改了也算冲突。
-	res, err := s.db.NewUpdate().Model(&m).
-		Column("name", "rsa_public_key", "key_type", "domains", "enabled", "channel_id", "remark", "updated_at").
-		WherePK().Where("updated_at = ?", old).Exec(ctx)
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		res, err := tx.NewUpdate().Model(&m).
+			Column("name", "rsa_public_key", "key_type", "domains", "enabled", "remark", "updated_at").
+			WherePK().Where("updated_at = ?", old).Exec(ctx)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return store.ErrConflict
+		}
+		if routes == nil {
+			return nil
+		}
+		return saveRoutes(ctx, tx, m.ID, routes)
+	})
 	if err != nil {
 		return nil, err
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return nil, store.ErrConflict
+	ms := []store.Merchant{m}
+	if err := s.loadRoutes(ctx, ms); err != nil {
+		return nil, err
 	}
-	return &m, nil
+	return &ms[0], nil
 }
 
 // ResetKey 重新生成 MD5 密钥，旧密钥立即失效。
@@ -293,12 +396,17 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 	if n > 0 {
 		return errors.New("这个商户已经有订单，只能停用，不能删除")
 	}
-	res, err := s.db.NewDelete().Model((*store.Merchant)(nil)).Where("id = ?", id).Exec(ctx)
-	if err != nil {
-		return err
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewDelete().Model((*store.MerchantRoute)(nil)).Where("merchant_id = ?", id).Exec(ctx); err != nil {
+			return err
+		}
+		res, err := tx.NewDelete().Model((*store.Merchant)(nil)).Where("id = ?", id).Exec(ctx)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
 }

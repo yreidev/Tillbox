@@ -3,7 +3,7 @@
 // 渠道是后台渠道表里的一条记录，按确认方式分两种：
 //   - 推断型（支付宝经营码、演示渠道）：渠道只负责给付款指引和拉流水，
 //     金额池和"哪笔流水属于哪个订单"的推断放在核心里公用，按渠道实例隔离；
-//   - 确认型（上游易支付）：渠道自己预下单、收回调、查单，逐单确认。
+//   - 确认型（第三方易支付）：渠道自己预下单、收回调、查单，逐单确认。
 package channel
 
 import (
@@ -28,6 +28,9 @@ var TypeNames = map[string]string{
 	"paypal": "PayPal",
 	"usdt":   "USDT",
 }
+
+// TypeOrder 是支付方式的固定顺序：商户的收款方式、收银台的选项都按它排。
+var TypeOrder = []string{"alipay", "wxpay", "qqpay", "bank", "jdpay", "paypal", "usdt"}
 
 // TypeLabel 返回支付方式的中文名，不认识的原样返回。
 func TypeLabel(t string) string {
@@ -56,9 +59,9 @@ type Guide struct {
 	App string `json:"app"`
 	// ManualAmount 为真时，付款人要自己输入金额（静态码）。
 	ManualAmount bool `json:"manual_amount"`
-	// PayURL 是“去付款”按钮的链接（上游给的付款页或唤起 App 的链接）。
+	// PayURL 是“去付款”按钮的链接（第三方平台给的付款页或唤起 App 的链接）。
 	PayURL string `json:"pay_url,omitempty"`
-	// Submit 为真时，“去付款”要先向收银台要一个现签的跳转地址（上游只给 HTML 表单）。
+	// Submit 为真时，“去付款”要先向收银台要一个现签的跳转地址（第三方平台只给 HTML 表单）。
 	Submit bool `json:"submit,omitempty"`
 }
 
@@ -137,51 +140,51 @@ type LedgerSource interface {
 	MaxSpan() time.Duration
 }
 
-// Payment 是向上游预下单的结果：上游订单号和给付款人的付款信息。
+// Payment 是向第三方平台预下单的结果：第三方平台订单号和给付款人的付款信息。
 type Payment struct {
 	TradeNo  string
 	InfoType string // store.InfoQRCode、InfoJump、InfoURLScheme、InfoSubmit
 	Info     string
 }
 
-// Paid 是上游确认的一笔付款（来自回调或查单）。
+// Paid 是第三方平台确认的一笔付款（来自回调或查单）。
 type Paid struct {
-	TradeNo    string // 上游订单号，作为流水号入库
+	TradeNo    string // 第三方平台订单号，作为流水号入库
 	OutTradeNo string // 本系统的平台订单号
 	Type       string
 	Amount     int64  // 分
 	APITradeNo string // 支付宝、微信等的交易号
 	Buyer      string
-	PaidAt     time.Time // 上游给出的付款时间，零值表示不知道
-	Raw        string    // 上游给的原文（JSON），不含签名
+	PaidAt     time.Time // 第三方平台给出的付款时间，零值表示不知道
+	Raw        string    // 第三方平台给的原文（JSON），不含签名
 }
 
-// Confirmer 由确认型渠道（上游易支付）实现：预下单、验回调、查单，逐单确认到账。
+// Confirmer 由确认型渠道（第三方易支付）实现：预下单、验回调、查单，逐单确认到账。
 // 回调和查单不看渠道是否启用：停用只是不再接新订单，已经付的款照样要确认。
 type Confirmer interface {
 	Channel
-	// Prepay 按订单的支付方式向上游预下单。base 是本系统的对外地址，用来拼回调和回跳地址。
+	// Prepay 按订单的支付方式向第三方平台预下单。base 是本系统的对外地址，用来拼回调和回跳地址。
 	Prepay(ctx context.Context, o *store.Order, base string) (Payment, error)
-	// SubmitURL 生成跳转到上游付款页的地址（上游只给 HTML 表单时用），每次现签。
+	// SubmitURL 生成跳转到第三方平台付款页的地址（第三方平台只给 HTML 表单时用），每次现签。
 	SubmitURL(ctx context.Context, o *store.Order, base string) (string, error)
-	// Query 向上游查单，没付款时返回 nil。tradeNo 是上游订单号，空时按平台订单号查。
+	// Query 向第三方平台查单，没付款时返回 nil。tradeNo 是第三方平台订单号，空时按平台订单号查。
 	Query(ctx context.Context, o *store.Order, tradeNo string) (*Paid, error)
-	// VerifyNotify 校验上游的回调参数，返回确认的付款。
+	// VerifyNotify 校验第三方平台的回调参数，返回确认的付款。
 	VerifyNotify(p map[string]string) (*Paid, error)
 }
 
-// Limiter 由有单笔金额限制的渠道实现（上游易支付）。
+// Limiter 由有单笔金额限制的渠道实现（第三方易支付）。
 type Limiter interface {
 	// CheckAmount 检查金额（分）在不在支付方式的单笔限额内，超出时返回 *AmountError。
 	CheckAmount(typ string, amount int64, now time.Time) error
 }
 
-// AmountError 是金额超出了支付方式的单笔限额。Error 给日志和后台看，被上游拒绝时是上游的原话；
+// AmountError 是金额超出了支付方式的单笔限额。Error 给日志和后台看，被第三方平台拒绝时是第三方平台的原话；
 // Message 给付款人和调用方看。
 type AmountError struct {
 	Type     string
 	Min, Max int64 // 分，超出的那一边非 0
-	// Err 是上游拒单的原错误；按已知限额提前拦下时为空。
+	// Err 是第三方平台拒单的原错误；按已知限额提前拦下时为空。
 	Err error
 }
 

@@ -22,6 +22,7 @@ import (
 	"tillbox/internal/epay"
 	"tillbox/internal/merchant"
 	"tillbox/internal/order"
+	"tillbox/internal/payroute"
 	"tillbox/internal/settings"
 	"tillbox/internal/store"
 )
@@ -232,51 +233,65 @@ func (s *Server) createOrder(r *http.Request, p epay.Params, version int, isSubm
 		return nil, fail(-1, "该域名不可发起支付，原因：域名没过白，请前往支付平台授权支付域名")
 	}
 
-	ch, _, found := s.Channels.Get(m.ChannelID)
-	if !found {
-		slog.Warn("商户没有可用的收款渠道", "pid", m.ID, "channel_id", m.ChannelID)
+	// 商户每种支付方式选一个渠道。没给支付方式时只开了一种就用它，开了几种就留给付款人在收银台选，选了才定渠道。
+	methods := payroute.Methods(ctx, s.Channels, m.Routes)
+	if len(methods) == 0 {
+		slog.Warn("商户没有开放任何支付方式", "pid", m.ID)
 		return nil, fail(-2, "支付通道暂时不可用，请联系商户")
 	}
-	if err := ch.Ready(ctx); err != nil {
-		slog.Warn("收款渠道没有就绪", "pid", m.ID, "channel", ch.Key(), "err", err)
-		return nil, fail(-2, "支付通道暂时不可用，请联系商户")
+	if typ == "" && len(methods) == 1 {
+		typ = methods[0].Type
 	}
-	_, confirming := ch.(channel.Confirmer)
-	types := ch.PayTypes()
-	if typ == "" && (len(types) == 1 || !confirming) {
-		typ = types[0] // 上游渠道开放了多种方式时，留给付款人在收银台选
-	}
-	if typ != "" && !slices.Contains(types, typ) {
-		label := channel.TypeNames[typ]
-		if label == "" {
-			label = "该支付方式（" + typ + "）"
-		}
-		return nil, fail(-1, "暂不支持%s，请使用%s付款", label, channel.TypeLabels(types))
-	}
-	// 已知金额超出单笔限额时不建单：指定了方式就看这一种，留给付款人选的要每种都超出才拦。
-	if l, ok := ch.(channel.Limiter); ok {
-		check := types
-		if typ != "" {
-			check = []string{typ}
-		}
-		var msgs []string
-		for _, t := range check {
-			var ae *channel.AmountError
-			if errors.As(l.CheckAmount(t, amount, s.now()), &ae) {
-				msgs = append(msgs, ae.Message())
+	var pick *payroute.Method
+	if typ != "" {
+		mt, ok := payroute.Find(methods, typ)
+		if !ok {
+			label := channel.TypeNames[typ]
+			if label == "" {
+				label = "该支付方式（" + typ + "）"
 			}
+			return nil, fail(-1, "暂不支持%s，请使用%s付款", label, payroute.Labels(methods))
 		}
-		if len(msgs) > 0 && len(msgs) == len(check) {
-			return nil, fail(-1, "%s", strings.Join(msgs, "，"))
+		if !mt.Ready() {
+			slog.Warn("收款渠道没有就绪", "pid", m.ID, "type", typ, "channel_id", mt.Row.ID, "err", mt.Problem)
+			return nil, fail(-2, "支付通道暂时不可用，请联系商户")
 		}
+		pick = &mt
+	} else if !slices.ContainsFunc(methods, payroute.Method.Ready) {
+		slog.Warn("商户开放的支付方式都收不了款", "pid", m.ID)
+		return nil, fail(-2, "支付通道暂时不可用，请联系商户")
+	}
+	// 已知金额超出单笔限额时不建单：定了方式就看这一种，留给付款人选的要每种能用的方式都超出才拦。
+	check := methods
+	if pick != nil {
+		check = []payroute.Method{*pick}
+	}
+	var msgs []string
+	usable := 0
+	for _, mt := range check {
+		if !mt.Ready() {
+			continue
+		}
+		usable++
+		var ae *channel.AmountError
+		if errors.As(mt.CheckAmount(amount, s.now()), &ae) {
+			msgs = append(msgs, ae.Message())
+		}
+	}
+	if len(msgs) > 0 && len(msgs) == usable {
+		return nil, fail(-1, "%s", strings.Join(msgs, "，"))
 	}
 
 	name = cutUTF8(name, 127)
-	o, _, err := s.Orders.Create(ctx, order.CreateInput{
+	in := order.CreateInput{
 		MerchantID: m.ID, OutTradeNo: outTradeNo, Version: version,
-		Channel: ch.Key(), NoTail: confirming, PayType: typ, Name: name, Money: money, Amount: amount,
+		NoTail: true, Name: name, Money: money, Amount: amount, // 留给付款人选的订单先不定渠道，也就还不分配尾数
 		NotifyURL: notifyURL, ReturnURL: returnURL, Param: p["param"], ClientIP: clientIP, Device: device,
-	})
+	}
+	if pick != nil {
+		in.Channel, in.NoTail, in.PayType = pick.Row.Key(), pick.Confirming(), pick.Type
+	}
+	o, _, err := s.Orders.Create(ctx, in)
 	if err != nil {
 		var full *order.PoolFullError
 		if errors.As(err, &full) || strings.HasPrefix(err.Error(), "该订单(") {
@@ -285,12 +300,19 @@ func (s *Server) createOrder(r *http.Request, p epay.Params, version int, isSubm
 		slog.Error("建单失败", "pid", m.ID, "out_trade_no", outTradeNo, "err", err)
 		return nil, fail(-1, "创建订单失败，请返回重试！")
 	}
-	// 上游渠道：知道支付方式就当场向上游预下单。失败时订单保持待支付，调用方用同一订单号重试会再预下单。
-	if cf, _ := s.Confirm.Confirmer(o.Channel); cf != nil && typ != "" {
-		if _, err := s.Confirm.Prepare(ctx, o, typ, s.BaseURL(r)); err != nil {
+	// 定了支付方式的：同一订单号再次下单复用的是原订单，没定方式的这时定下来；第三方易支付当场预下单。
+	// 预下单失败时订单保持待支付，调用方用同一订单号重试会再预下单。
+	if pick != nil {
+		if _, err := payroute.Choose(ctx, s.Orders, s.Confirm, o, *pick, s.BaseURL(r)); err != nil {
 			var ae *channel.AmountError
-			if errors.As(err, &ae) {
+			var full *order.PoolFullError
+			switch {
+			case errors.Is(err, order.ErrChosen):
+				return nil, fail(-1, "该订单(%s)已经选了%s，要换支付方式请更换订单号重新发起支付", outTradeNo, channel.TypeLabel(o.PayType))
+			case errors.As(err, &ae):
 				return nil, fail(-1, "%s", ae.Message())
+			case errors.As(err, &full):
+				return nil, fail(-1, "%s", err.Error())
 			}
 			return nil, fail(-2, "支付通道暂时不可用，请稍后重试")
 		}

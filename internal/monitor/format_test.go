@@ -19,7 +19,7 @@ func balanced(t *testing.T, text string) {
 	}
 }
 
-// 上游错误原话、商品名等动态内容可能带 < > &，要转义；太长的截短。
+// 第三方平台错误原话、商品名等动态内容可能带 < > &，要转义；太长的截短。
 func TestRenderEscapes(t *testing.T) {
 	now := time.Date(2026, 10, 17, 13, 15, 0, 0, time.UTC)
 	a := &store.Alert{Level: store.AlertCritical, Title: "渠道<1>&查账失败", Detail: "<html>" + strings.Repeat("长", 500), StartedAt: store.Ms(now)}

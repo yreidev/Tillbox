@@ -422,7 +422,7 @@ function Transactions({ search }: { search: Search }) {
               <Stack
                 className="max-w-40"
                 main={channelName(t.channel)}
-                sub={t.kind === 'upstream' ? '上游确认' : t.kind || undefined}
+                sub={t.kind === 'upstream' ? '第三方平台确认' : t.kind || undefined}
               />
             ),
           },

@@ -9,8 +9,8 @@ import (
 	"tillbox/internal/confirm"
 )
 
-// channelNotify 接收上游易支付的支付结果回调（官方用 GET，也接受 POST 表单）。
-// 处理好了回 success；不合格的回调回 fail；本系统出错时回 500，让上游稍后重试。
+// channelNotify 接收第三方易支付的支付结果回调（官方用 GET，也接受 POST 表单）。
+// 处理好了回 success；不合格的回调回 fail；本系统出错时回 500，让第三方平台稍后重试。
 func channelNotify(cf *confirm.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -48,7 +48,7 @@ func channelNotify(cf *confirm.Service) http.HandlerFunc {
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte("fail"))
 		default:
-			slog.Error("处理上游回调失败", "channel_id", id, "err", err)
+			slog.Error("处理第三方平台回调失败", "channel_id", id, "err", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = w.Write([]byte("fail"))
 		}

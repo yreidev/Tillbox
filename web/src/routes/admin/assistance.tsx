@@ -748,7 +748,7 @@ function ConfigForm({
           <Section title="允许自动执行的操作">
             <CheckboxInput
               label="自动请求重新查账"
-              description="向支付宝账单或上游再查一次这笔付款，仍受查账间隔限制。"
+              description="向支付宝账单或第三方平台再查一次这笔付款，仍受查账间隔限制。"
               value={v.auto_recheck}
               onChange={(x) => set('auto_recheck', x)}
             />

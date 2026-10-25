@@ -202,8 +202,8 @@ function OrdersPage() {
                 <span className="tb-num shrink-0 font-semibold">¥{yuan(o.pay_amount)}</span>
               </div>
               <span className="truncate text-xs text-muted">
-                {o.merchant_name || `商户 ${o.merchant_id}`} · {o.channel_name || o.channel} ·{' '}
-                {time(o.created_at, false)}
+                {o.merchant_name || `商户 ${o.merchant_id}`} ·{' '}
+                {o.channel ? o.channel_name || o.channel : '还没选支付方式'} · {time(o.created_at, false)}
               </span>
             </div>
           )}
@@ -240,7 +240,7 @@ function OrdersPage() {
               render: (o) => (
                 <Stack
                   className="max-w-40"
-                  main={o.channel_name || o.channel}
+                  main={o.channel ? o.channel_name || o.channel : '未定'}
                   sub={o.pay_type ? payTypeLabel(o.pay_type) : '还没选支付方式'}
                 />
               ),

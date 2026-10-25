@@ -107,7 +107,7 @@ func TestMerge(t *testing.T) {
 	}
 }
 
-// stub 是一个假的上游易支付，按测试设定回复。
+// stub 是一个假的第三方易支付，按测试设定回复。
 type stub struct {
 	t        *testing.T
 	srv      *httptest.Server
@@ -184,7 +184,7 @@ func newChannel(t *testing.T, s *stub, version int) *Channel {
 		t.Fatal(err)
 	}
 	c := New(b)
-	c.Configure(store.Channel{ID: 7, Type: store.ChannelEpay, Name: "上游", Enabled: true, Config: raw})
+	c.Configure(store.Channel{ID: 7, Type: store.ChannelEpay, Name: "第三方平台", Enabled: true, Config: raw})
 	return c
 }
 
@@ -218,11 +218,11 @@ func TestPrepayV1(t *testing.T) {
 		p["device"] != "mobile" || p["clientip"] != "1.2.3.4" {
 		t.Errorf("V1 下单参数：%v", p)
 	}
-	// 错误：上游业务错误、不是 JSON、跳转链接不是网址。
+	// 错误：第三方平台业务错误、不是 JSON、跳转链接不是网址。
 	s.reply = func(string, epay.Params) map[string]any { return map[string]any{"code": -2, "msg": "通道维护"} }
 	var ue *Error
 	if _, err := c.Prepay(context.Background(), testOrder, "https://x"); !errors.As(err, &ue) || ue.Code != "-2" || ue.Msg != "通道维护" {
-		t.Errorf("上游业务错误：%v", err)
+		t.Errorf("第三方平台业务错误：%v", err)
 	}
 	s.reply = func(string, epay.Params) map[string]any { return nil }
 	if _, err := c.Prepay(context.Background(), testOrder, "https://x"); err == nil || !strings.Contains(err.Error(), "不是 JSON") {
@@ -246,7 +246,7 @@ func TestPrepayV1(t *testing.T) {
 	cfg, _ := c.Config()
 	cfg.APIURL = s.srv.URL + "/redirect"
 	raw, _ := json.Marshal(cfg)
-	c.Configure(store.Channel{ID: 7, Type: store.ChannelEpay, Name: "上游", Enabled: true, Config: string(raw)})
+	c.Configure(store.Channel{ID: 7, Type: store.ChannelEpay, Name: "第三方平台", Enabled: true, Config: string(raw)})
 	if _, err := c.Prepay(context.Background(), testOrder, "https://x"); err == nil || !strings.Contains(err.Error(), "HTTP 302") {
 		t.Errorf("重定向：%v", err)
 	}
@@ -265,7 +265,7 @@ func TestQueryAndNotifyV1(t *testing.T) {
 		t.Fatalf("未付款：%v %v", paid, err)
 	}
 	if s.got[0]["trade_no"] != "U1" {
-		t.Errorf("有上游单号时按它查：%v", s.got[0])
+		t.Errorf("有第三方平台单号时按它查：%v", s.got[0])
 	}
 	s.reply = func(string, epay.Params) map[string]any {
 		return map[string]any{"code": 1, "trade_no": "U1", "out_trade_no": testOrder.TradeNo, "status": 1, "money": "10.50", "api_trade_no": "W123", "buyer": "o_abc", "endtime": "2026-10-17 10:00:00", "type": "wxpay"}
@@ -276,7 +276,7 @@ func TestQueryAndNotifyV1(t *testing.T) {
 		t.Fatalf("已付款：%+v %v", paid, err)
 	}
 	if s.got[1]["out_trade_no"] != testOrder.TradeNo {
-		t.Errorf("没有上游单号时按平台订单号查：%v", s.got[1])
+		t.Errorf("没有第三方平台单号时按平台订单号查：%v", s.got[1])
 	}
 	s.reply = func(string, epay.Params) map[string]any {
 		return map[string]any{"code": 1, "trade_no": "U1", "out_trade_no": "other", "status": 1, "money": "10.50"}

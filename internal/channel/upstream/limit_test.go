@@ -12,7 +12,7 @@ import (
 	"tillbox/internal/store"
 )
 
-// 上游拒单原话里的限额：认得出的记下订单超出的那一边，金额其实没超出的不算。
+// 第三方平台拒单原话里的限额：认得出的记下订单超出的那一边，金额其实没超出的不算。
 func TestAmountLimit(t *testing.T) {
 	for _, c := range []struct {
 		msg      string
@@ -41,7 +41,7 @@ func TestAmountLimit(t *testing.T) {
 	}
 }
 
-// 预下单被上游以金额为由拒绝：返回带上游原话的 *channel.AmountError。
+// 预下单被第三方平台以金额为由拒绝：返回带第三方平台原话的 *channel.AmountError。
 func TestPrepayAmountRejected(t *testing.T) {
 	s := newStub(t)
 	c := newChannel(t, s, 1)
@@ -106,7 +106,7 @@ func TestLearnLimits(t *testing.T) {
 	}
 	for name, cfg := range map[string]string{
 		"成功且没超出":   Learn(raw, "alipay", 50, nil, t0),
-		"别的错误":     Learn(raw, "alipay", 1, errors.New("连不上上游"), t0),
+		"别的错误":     Learn(raw, "alipay", 1, errors.New("连不上第三方平台"), t0),
 		"认不出的拒绝":   Learn(raw, "alipay", 1, rejected("alipay", 1, "支付方式维护中"), t0),
 		"提前拦下的":    Learn(raw, "alipay", 1, &channel.AmountError{Type: "alipay", Min: 30}, t0),
 		"没开放的方式":   Learn(raw, "qqpay", 1, rejected("qqpay", 1, "最小支付金额是0.3元"), t0),
@@ -117,7 +117,7 @@ func TestLearnLimits(t *testing.T) {
 		}
 	}
 
-	// 过了 LimitTrust 不再拦，交给上游；上游已经放宽、下单成功，就清掉。
+	// 过了 LimitTrust 不再拦，交给第三方平台；第三方平台已经放宽、下单成功，就清掉。
 	t1 := t0.Add(LimitTrust)
 	if err := c.CheckAmount("alipay", 1, t1); err != nil {
 		t.Errorf("过期的自动限额不拦：%v", err)
@@ -127,7 +127,7 @@ func TestLearnLimits(t *testing.T) {
 		t.Errorf("下单成功后应放宽：%+v", ViewOf(raw).Limits)
 	}
 
-	// 手动设置的不过期；上游拒绝时换成上游给的值，最高金额低于新的最低金额时去掉。
+	// 手动设置的不过期；第三方平台拒绝时换成第三方平台给的值，最高金额低于新的最低金额时去掉。
 	cfg, err := merge(t, b, raw, Input{APIURL: "https://pay.example.com", Version: 1, PID: "1001", Types: []string{"alipay", "wxpay"},
 		Limits: map[string]LimitInput{"alipay": {Min: "1", Max: "1.5"}}}, true)
 	if err != nil {
@@ -142,7 +142,7 @@ func TestLearnLimits(t *testing.T) {
 	}
 	apply(Learn(raw, "alipay", 150, rejected("alipay", 150, "最小支付金额是2元"), t1))
 	if v := ViewOf(raw).Limits["alipay"]; v.Min != "2.00" || v.MinAt != store.Ms(t1) || v.Max != "" {
-		t.Errorf("上游拒绝后：%+v", v)
+		t.Errorf("第三方平台拒绝后：%+v", v)
 	}
 	apply(Learn(raw, "wxpay", 600000, rejected("wxpay", 600000, "当前支付方式单笔最大限额为5000元，请选择其他支付方式！"), t1))
 	if err := c.CheckAmount("wxpay", 500001, t1); !errors.As(err, &ae) || ae.Max != 500000 {

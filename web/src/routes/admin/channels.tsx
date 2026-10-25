@@ -76,7 +76,7 @@ type Editing = { id: number } | { type: ChannelType } | null
 
 const typeMeta: Record<ChannelType, { icon: Icon; blurb: string }> = {
   alipay_qr: { icon: QrCode, blurb: '用自己的支付宝经营码收款：查支付宝账单，按应付金额的尾数认单。' },
-  epay: { icon: Globe, blurb: '把订单转给别家易支付收款，由上游的回调和查单确认到账，按原价付款。' },
+  epay: { icon: Globe, blurb: '把订单转给别家易支付收款，由第三方平台的回调和查单确认到账，按原价付款。' },
   demo: { icon: Flask, blurb: '本地演示用，不连支付宝，用开发接口模拟付款。' },
 }
 
@@ -434,7 +434,7 @@ function limitText(l: { min: string; max: string }) {
   return l.min ? `${l.min} 元起` : `${l.max} 元以内`
 }
 
-// LearnedLimits 列出从上游拒单原话里自动识别的限额，让管理员知道这些不是自己填的。
+// LearnedLimits 列出从第三方平台拒单原话里自动识别的限额，让管理员知道这些不是自己填的。
 function LearnedLimits({ c }: { c: ChannelView }) {
   const now = useNow()
   const items = Object.entries(limitsOf(c)).flatMap(([t, l]) => [
@@ -444,12 +444,12 @@ function LearnedLimits({ c }: { c: ChannelView }) {
   if (!items.length) return null
   return (
     <Typography.Paragraph size="xs" color="muted">
-      上游拒单时自动识别：{items.join('，')}
+      第三方平台拒单时自动识别：{items.join('，')}
     </Typography.Paragraph>
   )
 }
 
-// Health 是渠道的运行情况：经营码看查账，上游看预下单、查单和回调。
+// Health 是渠道的运行情况：经营码看查账，第三方平台看预下单、查单和回调。
 function Health({ c }: { c: ChannelView }) {
   const lines = channelHealth(c, useNow())
   return (
@@ -912,7 +912,7 @@ function AlipayForm({ c, onCreated }: { c?: ChannelView; onCreated: (id: number)
     },
     {
       title: '启用并分配给商户',
-      description: '打开下面的「启用」并保存，再到商户页给商户选这个渠道。',
+      description: '打开下面的「启用」并保存，再到商户页把要走这个渠道的支付方式选成它。',
       done: !!c?.enabled,
     },
   ]
@@ -1095,29 +1095,29 @@ function UpstreamForm({ c, onCreated }: { c?: ChannelView; onCreated: (id: numbe
   }
   const steps: Step[] = [
     {
-      title: '填写上游接口地址和商户号',
-      description: '在上游商户后台能找到。',
+      title: '填写第三方平台接口地址和商户号',
+      description: '在第三方平台商户后台能找到。',
       done: !!v.api_url.trim() && !!v.pid.trim(),
     },
     v.version === 2
       ? {
           title: '配置 RSA 密钥',
           description: c
-            ? '生成或导入商户私钥，把商户公钥填到上游后台，再把上游的平台公钥填到下面。'
+            ? '生成或导入商户私钥，把商户公钥填到第三方平台后台，再把第三方平台给的平台公钥填到下面。'
             : '先创建渠道，之后才能生成密钥对。',
           done: !!u.has_private_key && !!v.platform_public_key.trim(),
         }
-      : { title: '填写商户密钥（MD5）', description: '上游商户后台里的商户密钥。', done: !!u.has_key || !!v.key },
-    { title: '勾选开放的支付方式', description: '只勾上游真正开通了的方式。', done: v.types.length > 0 },
+      : { title: '填写商户密钥（MD5）', description: '第三方平台商户后台里的商户密钥。', done: !!u.has_key || !!v.key },
+    { title: '勾选开放的支付方式', description: '只勾第三方平台真正开通了的方式。', done: v.types.length > 0 },
     {
       title: '测试连接',
-      description: test.result?.message ?? '保存后点底部的「测试连接」，确认上游能正常查单。',
+      description: test.result?.message ?? '保存后点底部的「测试连接」，确认第三方平台能正常查单。',
       done: !!test.result?.ok,
       error: test.result?.ok === false,
     },
     {
       title: '启用并分配给商户',
-      description: '打开下面的「启用」并保存，再到商户页给商户选这个渠道。',
+      description: '打开下面的「启用」并保存，再到商户页把要走这个渠道的支付方式选成它。',
       done: !!c?.enabled,
     },
   ]
@@ -1133,22 +1133,22 @@ function UpstreamForm({ c, onCreated }: { c?: ChannelView; onCreated: (id: numbe
           }}
         >
           <Notice>
-            下单时向上游预下单，付款人在本站收银台扫上游的码或跳到上游付款，上游回调或查单确认后到账。按原价付款，不加尾数。
+            下单时向第三方平台预下单，付款人在本站收银台扫它给的码或跳到它的付款页，第三方平台回调或查单确认后到账。按原价付款，不加尾数。
           </Notice>
           <Checklist steps={steps} />
           <BaseFields v={v} set={setBase} />
-          <Section title="上游接口">
+          <Section title="第三方平台接口">
             <TextInput
-              label="上游接口地址"
+              label="第三方平台接口地址"
               placeholder="https://pay.example.com/"
-              description="填上游给的易支付接口地址（网站根地址），要 HTTPS；末尾的 submit.php、mapi.php 会自动去掉。"
+              description="填第三方平台给的易支付接口地址（网站根地址），要 HTTPS；末尾的 submit.php、mapi.php 会自动去掉。"
               mono
               value={v.api_url}
               onChange={(x) => set('api_url', x)}
             />
             <TextInput
               label="商户号（pid）"
-              placeholder="上游商户后台里的商户 ID"
+              placeholder="第三方平台商户后台里的商户 ID"
               maxLength={32}
               mono
               value={v.pid}
@@ -1173,19 +1173,19 @@ function UpstreamForm({ c, onCreated }: { c?: ChannelView; onCreated: (id: numbe
                   label="商户密钥对"
                   pub={u.public_key ?? ''}
                   has={!!u.has_private_key}
-                  upload="填到上游商户后台的「商户公钥」"
-                  warn="旧私钥立即作废，要把新的商户公钥重新填到上游商户后台，否则预下单和查单会失败。"
+                  upload="填到第三方平台商户后台的「商户公钥」"
+                  warn="旧私钥立即作废，要把新的商户公钥重新填到第三方平台商户后台，否则预下单和查单会失败。"
                   onMoved={rev.moved}
                 />
                 <ImportKey
-                  title="上游已经给了商户私钥？导入"
+                  title="第三方平台已经给了商户私钥？导入"
                   placeholder="粘贴商户私钥（PKCS#8 或 PKCS#1，Base64 或 PEM）。保存时加密存储，不会再显示。"
                   busy={busy}
                   onImport={(k) => submit(k)}
                 />
                 <TextAreaInput
-                  label="上游平台公钥"
-                  placeholder="上游商户后台里的「平台公钥」，用来验证上游的响应和回调"
+                  label="第三方平台公钥"
+                  placeholder="第三方平台商户后台里的「平台公钥」，用来验证第三方平台的响应和回调"
                   rows={4}
                   mono
                   value={v.platform_public_key}
@@ -1197,8 +1197,8 @@ function UpstreamForm({ c, onCreated }: { c?: ChannelView; onCreated: (id: numbe
                 label="商户密钥（MD5）"
                 type="password"
                 autoComplete="off"
-                placeholder={u.has_key ? '已保存，留空表示不改' : '上游商户后台里的商户密钥'}
-                description="加密存储，保存后不再显示。换了上游接口地址时要重新填。"
+                placeholder={u.has_key ? '已保存，留空表示不改' : '第三方平台商户后台里的商户密钥'}
+                description="加密存储，保存后不再显示。换了第三方平台接口地址时要重新填。"
                 value={v.key}
                 onChange={(x) => set('key', x)}
               />
@@ -1225,20 +1225,20 @@ function UpstreamForm({ c, onCreated }: { c?: ChannelView; onCreated: (id: numbe
                 ))}
               </div>
               <Description>
-                只勾上游真正开通了的方式。商户下单没指定方式、而这里勾了多种时，付款人在收银台选择。
+                只勾第三方平台真正开通了的方式。勾了之后还要到商户页，把商户的这种支付方式选成这个渠道。
               </Description>
             </CheckboxGroup>
             {c && (
               <Typography.Paragraph size="xs" color="muted">
                 下单时会把回调地址 <Code>{`${apiURL}web-api/channels/${c.id}/notify`}</Code>{' '}
-                带给上游，上游后台不用另外配置；上游要能访问到这个地址。
+                随订单发给第三方平台，它的后台不用另外配置；第三方平台要能访问到这个地址。
               </Typography.Paragraph>
             )}
           </Section>
           {v.types.length > 0 && (
             <Section title="单笔限额" className={enter}>
               <Typography.Paragraph size="xs" color="muted">
-                留空表示不限。上游以金额为由拒单时（例如“最小支付金额是0.3元”）会自动填上，24
+                留空表示不限。第三方平台以金额为由拒单时（例如“最小支付金额是0.3元”）会自动填上，24
                 小时内金额不在范围里的订单直接请付款人换一种方式；手动填的一直有效。
               </Typography.Paragraph>
               {v.types.map((t) => {

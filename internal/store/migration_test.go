@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"testing/fstest"
 
@@ -67,6 +69,12 @@ func TestUpgradeExistingSQLite(t *testing.T) {
 // upgradeFrom3 用 00001–00003 建一个旧库，执行 seed 写入旧数据，然后用 Open 升级到最新。
 func upgradeFrom3(t *testing.T, driver, dsn string, seed func(db *sql.DB)) *bun.DB {
 	t.Helper()
+	return upgradeFrom(t, driver, dsn, 3, seed)
+}
+
+// upgradeFrom 先只执行前 n 个迁移，seed 写入旧版本的数据，再打开数据库执行其余迁移。
+func upgradeFrom(t *testing.T, driver, dsn string, n int, seed func(db *sql.DB)) *bun.DB {
+	t.Helper()
 	ctx := context.Background()
 	drv, dia, dir := "sqlite", goose.DialectSQLite3, "migrations/sqlite"
 	if driver == "postgres" {
@@ -76,9 +84,14 @@ func upgradeFrom3(t *testing.T, driver, dsn string, seed func(db *sql.DB)) *bun.
 	if err != nil {
 		t.Fatal(err)
 	}
+	names, err := fs.Glob(migrations, dir+"/*.sql")
+	if err != nil || len(names) < n {
+		t.Fatalf("迁移文件：%v %v", err, names)
+	}
 	old := fstest.MapFS{}
-	for _, name := range []string{"00001_init.sql", "00002_operations.sql", "00003_assistance.sql"} {
-		raw, err := fs.ReadFile(migrations, dir+"/"+name)
+	for _, path := range names[:n] {
+		name := filepath.Base(path)
+		raw, err := fs.ReadFile(migrations, path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -140,9 +153,8 @@ func checkChannelUpgrade(t *testing.T, driver, dsn string) {
 	if err := db.NewSelect().Model(&tx).Where("external_id = 'e1'").Scan(ctx); err != nil || tx.Channel != "ch1" {
 		t.Errorf("历史流水应指向 1 号渠道：%v %q", err, tx.Channel)
 	}
-	var ms []Merchant
-	if err := db.NewSelect().Model(&ms).Scan(ctx); err != nil || len(ms) != 2 || ms[0].ChannelID != 1 || ms[1].ChannelID != 1 {
-		t.Errorf("商户应指向 1 号渠道：%v %+v", err, ms)
+	if got := routesOf(t, db); !slices.Equal(got, []string{"1001:alipay=1", "1002:alipay=1"}) {
+		t.Errorf("商户的支付宝应走 1 号渠道：%v", got)
 	}
 	var keys []string
 	if err := db.NewSelect().Model((*Setting)(nil)).Column("key").Order("key").Scan(ctx, &keys); err != nil {
@@ -167,12 +179,17 @@ func TestUpgradeToChannelsPostgres(t *testing.T) {
 	if dsn == "" {
 		t.Skip("没有设置 TILLBOX_TEST_PG_DSN")
 	}
+	checkChannelUpgrade(t, "postgres", pgSchema(t, dsn, "t_upgrade_channels"))
+}
+
+// pgSchema 在测试库里建一个空的 schema，返回指向它的连接串；测试结束时删掉。
+func pgSchema(t *testing.T, dsn, schema string) string {
+	t.Helper()
 	admin, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer admin.Close()
-	schema := "t_upgrade_channels"
+	t.Cleanup(func() { admin.Close() })
 	_, _ = admin.Exec("DROP SCHEMA IF EXISTS " + schema + " CASCADE")
 	if _, err := admin.Exec("CREATE SCHEMA " + schema); err != nil {
 		t.Fatal(err)
@@ -185,7 +202,54 @@ func TestUpgradeToChannelsPostgres(t *testing.T) {
 	q := u.Query()
 	q.Set("search_path", schema)
 	u.RawQuery = q.Encode()
-	checkChannelUpgrade(t, "postgres", u.String())
+	return u.String()
+}
+
+// routesOf 读出全部商户的收款方式，写成“商户号:支付方式=渠道编号”，按商户号和支付方式排好。
+func routesOf(t *testing.T, db *bun.DB) []string {
+	t.Helper()
+	var rs []MerchantRoute
+	if err := db.NewSelect().Model(&rs).Order("merchant_id", "pay_type").Scan(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	out := make([]string, len(rs))
+	for i, r := range rs {
+		out[i] = fmt.Sprintf("%d:%s=%d", r.MerchantID, r.PayType, r.ChannelID)
+	}
+	return out
+}
+
+// 商户从只选一个渠道换成按支付方式选：经营码和演示渠道换成支付宝，第三方易支付换成它勾选的方式。
+func checkRoutesUpgrade(t *testing.T, driver, dsn string) {
+	db := upgradeFrom(t, driver, dsn, 6, func(db *sql.DB) {
+		exec(t, db, `INSERT INTO channels(id,type,name,enabled,config,created_at,updated_at) VALUES
+			(1,'alipay_qr','经营码',TRUE,'{}',1,1),
+			(2,'epay','第三方',TRUE,'{"api_url":"https://pay.example.com","types":["alipay","wxpay"]}',1,1),
+			(3,'demo','演示',FALSE,'{}',1,1),
+			(4,'epay','没勾方式',TRUE,'{"types":null}',1,1)`)
+		for id, ch := range map[int]int{1001: 1, 1002: 2, 1003: 3, 1004: 4, 1005: 0, 1006: 99} {
+			exec(t, db, fmt.Sprintf(`INSERT INTO merchants(id,name,md5_key,channel_id,created_at,updated_at) VALUES(%d,'m','k',%d,1,1)`, id, ch))
+		}
+	})
+	want := []string{"1001:alipay=1", "1002:alipay=2", "1002:wxpay=2", "1003:alipay=3"}
+	if got := routesOf(t, db); !slices.Equal(got, want) {
+		t.Errorf("收款方式 %v，应为 %v", got, want)
+	}
+	if _, err := db.NewRaw("SELECT channel_id FROM merchants").Exec(context.Background()); err == nil {
+		t.Error("merchants.channel_id 应该删掉")
+	}
+}
+
+func TestUpgradeToRoutesSQLite(t *testing.T) {
+	checkRoutesUpgrade(t, "sqlite", filepath.Join(t.TempDir(), "v6.db"))
+}
+
+func TestUpgradeToRoutesPostgres(t *testing.T) {
+	dsn := os.Getenv("TILLBOX_TEST_PG_DSN")
+	if dsn == "" {
+		t.Skip("没有设置 TILLBOX_TEST_PG_DSN")
+	}
+	checkRoutesUpgrade(t, "postgres", pgSchema(t, dsn, "t_upgrade_routes"))
 }
 
 // 全新安装没有支付宝设置时不建渠道；演示库里的假渠道订单归到演示渠道。
@@ -214,9 +278,8 @@ func TestUpgradeDemoOrders(t *testing.T) {
 		exec(t, db, `INSERT INTO settings(key,value,updated_at) VALUES('alipay','{"enabled":false,"app_id":"2021"}',1)`)
 		exec(t, db, `INSERT INTO orders(trade_no,merchant_id,out_trade_no,version,channel,pay_type,name,money,amount,pay_amount,notify_url,status,created_at,expires_at,released_at,updated_at) VALUES('t1',1001,'o1',1,'fake','alipay','x','1.00',100,101,'https://example.com','paid',1,2,3,4)`)
 	})
-	var m Merchant
-	if err := mixed.NewSelect().Model(&m).Where("id = 1001").Scan(ctx); err != nil || m.ChannelID != 2 {
-		t.Errorf("商户应指向启用的演示渠道：%v %d", err, m.ChannelID)
+	if got := routesOf(t, mixed); !slices.Equal(got, []string{"1001:alipay=2"}) {
+		t.Errorf("商户的支付宝应走启用的演示渠道：%v", got)
 	}
 
 	empty := upgradeFrom3(t, "sqlite", filepath.Join(t.TempDir(), "empty.db"), func(*sql.DB) {})

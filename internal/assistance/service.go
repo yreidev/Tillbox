@@ -320,7 +320,7 @@ func (s *Service) process(ctx context.Context, c *store.AssistanceCase, cfg sett
 	if cfg.AutoNotify && !financialIssue && o != nil && o.Status == store.OrderPaid && nerr == nil && n.Status != store.NotifySuccess && store.Now()-n.LastAt >= 60_000 {
 		allowed = append(allowed, "retry_notification")
 	}
-	// 补认只适用于经营码这类靠流水推断的渠道；上游渠道的付款以上游确认为准。
+	// 补认只适用于经营码这类靠流水推断的渠道；第三方易支付渠道的付款以第三方平台确认为准。
 	if cfg.AutoLink && !financialIssue && o != nil && c.Source == "payer" && s.Pollers.Get(o.Channel) != nil && t.ID > 0 && c.PaymentRef != "" && c.ClaimAmount == o.PayAmount && t.Amount == o.PayAmount && t.OrderID == 0 && (o.Status == store.OrderPending || o.Status == store.OrderExpired) {
 		allowed = append(allowed, "link_payment")
 	}
@@ -385,7 +385,7 @@ func (s *Service) process(ctx context.Context, c *store.AssistanceCase, cfg sett
 	case "recheck":
 		if cf, _ := s.Confirm.Confirmer(o.Channel); cf != nil {
 			s.Confirm.Kick(o.ID)
-			return s.finish(ctx, c, "waiting", d.Reason, "已请求向支付通道查询这笔订单，正在等待结果。", d.Action, "已触发上游查单")
+			return s.finish(ctx, c, "waiting", d.Reason, "已请求向支付通道查询这笔订单，正在等待结果。", d.Action, "已触发第三方平台查单")
 		}
 		s.Pollers.Kick(o.Channel)
 		return s.finish(ctx, c, "waiting", d.Reason, "已请求重新查账，正在等待真实到账记录。", d.Action, "已触发查账，仍受支付宝查账间隔限制")

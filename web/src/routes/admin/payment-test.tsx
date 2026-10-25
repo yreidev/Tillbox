@@ -25,6 +25,7 @@ import {
   type StepStatus,
 } from '../../lib/ui'
 import { OrderDetail } from '../../components/order-detail'
+import { routeList } from '../../lib/routes'
 
 export const Route = createFileRoute('/admin/payment-test')({ component: PaymentTestPage })
 
@@ -52,15 +53,21 @@ function PaymentTestPage() {
   }
   const [detail, setDetail] = useState<number | null>(null)
   const [merchantID, setMerchantID] = useState<number | undefined>()
+  // 支付方式；choose 是不指定，由付款人在收银台选
+  const [payType, setPayType] = useState('choose')
   const [money, setMoney] = useState('1.00')
   const [version, setVersion] = useState<'1' | '2'>('1')
   const merchants = useQuery({
     queryKey: ['merchants'],
     queryFn: () => api.get<{ items: { merchant: Merchant }[] }>('/web-api/admin/merchants'),
   })
-  const merchantChannel = (id?: number) =>
-    channels.find((c) => c.id === merchants.data?.items.find(({ merchant: m }) => m.id === id)?.merchant.channel_id)
-  const picked = merchantChannel(merchantID)
+  const routes = routeList(
+    merchants.data?.items.find(({ merchant: m }) => m.id === merchantID)?.merchant.routes,
+    channels,
+  )
+  // 只开了一种方式时就是它
+  const typ = routes.length === 1 ? routes[0].type : payType
+  const route = routes.find((r) => r.type === typ)
   const tests = useQuery({
     queryKey: ['payment-tests'],
     queryFn: () => api.get<Page<OrderView>>('/web-api/admin/orders?is_test=true&page_size=20'),
@@ -73,6 +80,7 @@ function PaymentTestPage() {
         merchant_id: merchantID,
         money: money.trim(),
         version: Number(version),
+        pay_type: route?.type ?? '',
       }),
     onSuccess: async (res) => {
       pick(res.order.id)
@@ -87,7 +95,7 @@ function PaymentTestPage() {
     <div className="flex flex-col gap-4">
       <PageHeader description="用自己的商户下一笔小额测试单，走一遍付款、到账确认和通知验签，确认整条链路是通的。" />
       <Notice status="warning">
-        测试单按所选商户的支付渠道下单，会真实收款，请严格按收银台的应付金额付款。通知发回本站验签，不会给业务站充值；测试单不计入营业统计。
+        测试单按所选商户的收款方式下单，会真实收款，请严格按收银台的应付金额付款。通知发回本站验签，不会给业务站充值；测试单不计入营业统计。
       </Notice>
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
         <div className="flex flex-col gap-4">
@@ -105,19 +113,44 @@ function PaymentTestPage() {
                 placeholder={enabled.length ? '选择已启用的商户' : '没有已启用的商户'}
                 isRequired
                 value={merchantID}
-                onChange={setMerchantID}
+                onChange={(id) => {
+                  setMerchantID(id)
+                  setPayType('choose')
+                }}
                 options={enabled.map(({ merchant: m }) => ({ value: m.id, label: `${m.name}（${m.id}）` }))}
                 description={
-                  picked ? (
-                    <span className={cx(picked.enabled && !picked.problem ? undefined : 'text-danger')}>
-                      走渠道「{picked.name}」
-                      {!picked.enabled ? '，渠道已停用' : picked.problem ? `，不能收款：${picked.problem}` : ''}
-                    </span>
+                  merchantID !== undefined && !routes.length ? (
+                    <span className="text-danger">这个商户还没开收款方式，先到商户页选好</span>
                   ) : (
-                    '用这个商户的密钥签名下单，走它选的支付渠道'
+                    '用这个商户的密钥签名下单，走它的收款方式'
                   )
                 }
               />
+              {routes.length > 0 && (
+                <SelectInput<string>
+                  label="支付方式"
+                  value={typ}
+                  onChange={(x) => setPayType(x ?? 'choose')}
+                  isDisabled={routes.length === 1}
+                  options={[
+                    ...(routes.length > 1 ? [{ value: 'choose', label: '不指定，付款人在收银台选' }] : []),
+                    ...routes.map((r) => ({
+                      value: r.type,
+                      label: `${r.label}（${r.channel?.name ?? '已删除的渠道'}）`,
+                    })),
+                  ]}
+                  description={
+                    route ? (
+                      <span className={cx(route.problem && 'text-danger')}>
+                        走渠道「{route.channel?.name ?? '已删除的渠道'}」
+                        {route.problem && `，收不了款：${route.problem}`}
+                      </span>
+                    ) : (
+                      '和调用方没带支付方式一样：收银台先让付款人选，选定后不能换'
+                    )
+                  }
+                />
+              )}
               <TextInput
                 label="订单金额（元）"
                 inputMode="decimal"
@@ -126,9 +159,11 @@ function PaymentTestPage() {
                 onChange={setMoney}
                 validate={(v) => (/^\d+(\.\d{1,2})?$/.test(v.trim()) ? null : '填 0.01–100.00 之间的金额')}
                 description={
-                  picked?.type === 'epay'
-                    ? '0.01–100.00 元，上游渠道按原价付款'
-                    : '0.01–100.00 元，经营码渠道的应付金额会加上尾数'
+                  route?.channel?.type === 'epay'
+                    ? '0.01–100.00 元，第三方易支付渠道按原价付款'
+                    : route
+                      ? '0.01–100.00 元，经营码渠道的应付金额会加上尾数'
+                      : '0.01–100.00 元，经营码渠道的应付金额会加上尾数，第三方易支付渠道按原价付款'
                 }
               />
               <RadioInput
@@ -369,7 +404,7 @@ function Progress({ id, onDetail }: { id: number; onDetail: (id: number) => void
             { key: '订单号', value: <Copyable text={o.trade_no} mono /> },
             { key: '状态', value: <StateTag state={o.state} /> },
             { key: '商户', value: o.merchant_name || `商户 ${o.merchant_id}` },
-            { key: '渠道', value: o.channel_name || o.channel },
+            { key: '渠道', value: o.channel ? o.channel_name || o.channel : '付款人还没选支付方式' },
             { key: '通知签名', value: o.version === 2 ? 'V2（RSA）' : 'V1（MD5）' },
             { key: '订单金额', value: <span className="tb-num">{yuan(o.amount)} 元</span> },
             { key: '应付金额', value: <span className="tb-num font-semibold">{yuan(o.pay_amount)} 元</span> },

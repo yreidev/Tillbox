@@ -105,7 +105,7 @@ func (c *Checker) Check(ctx context.Context) ([]Problem, error) {
 			}
 		}
 	}
-	// 上游渠道：停用后已经下的单还要查，所以停用的也看。
+	// 第三方易支付渠道：停用后已经下的单还要查，所以停用的也看。
 	for _, row := range c.Channels.List() {
 		if row.Type != store.ChannelEpay {
 			continue
@@ -114,13 +114,13 @@ func (c *Checker) Check(ctx context.Context) ([]Problem, error) {
 		name := "渠道「" + row.Name + "」"
 		st := c.Confirm.Status(key)
 		if st.PrepayFailures >= failureThreshold {
-			add(Problem{Key: "upstream_prepay:" + key, Level: store.AlertCritical, Title: fmt.Sprintf("%s向上游预下单连续失败 %d 次", name, st.PrepayFailures), Detail: st.PrepayErr, Link: "/admin/channels"})
+			add(Problem{Key: "upstream_prepay:" + key, Level: store.AlertCritical, Title: fmt.Sprintf("%s向第三方平台预下单连续失败 %d 次", name, st.PrepayFailures), Detail: st.PrepayErr, Link: "/admin/channels"})
 		}
 		if st.CheckFailures >= failureThreshold {
-			add(Problem{Key: "upstream_check:" + key, Level: store.AlertCritical, Title: fmt.Sprintf("%s向上游查单连续失败 %d 次", name, st.CheckFailures), Detail: st.CheckErr, Link: "/admin/channels"})
+			add(Problem{Key: "upstream_check:" + key, Level: store.AlertCritical, Title: fmt.Sprintf("%s向第三方平台查单连续失败 %d 次", name, st.CheckFailures), Detail: st.CheckErr, Link: "/admin/channels"})
 		}
 		if st.NotifyErrAt > st.NotifyAt && since(st.NotifyErrAt) < UpstreamNotifyWindow {
-			add(Problem{Key: "upstream_notify:" + key, Level: store.AlertWarning, Title: name + "收到不合格的上游回调", Detail: st.NotifyErr, Link: "/admin/channels"})
+			add(Problem{Key: "upstream_notify:" + key, Level: store.AlertWarning, Title: name + "收到不合格的第三方平台回调", Detail: st.NotifyErr, Link: "/admin/channels"})
 		}
 	}
 

@@ -14,7 +14,7 @@ function failureLine(what: string, failures: number, err: string): HealthLine {
   return { tone: failures >= alertAfter ? 'danger' : 'warning', text: `${what}连续失败 ${failures} 次：${err}` }
 }
 
-// channelHealth 是渠道的运行情况：经营码看查账，上游看预下单、查单和回调。渠道页卡片和监控页共用。
+// channelHealth 是渠道的运行情况：经营码看查账，第三方平台看预下单、查单和回调。渠道页卡片和监控页共用。
 export function channelHealth(c: Pick<ChannelView, 'type' | 'enabled' | 'ledger' | 'upstream'>, now: number) {
   const lines: HealthLine[] = []
   if (c.ledger && c.enabled) {

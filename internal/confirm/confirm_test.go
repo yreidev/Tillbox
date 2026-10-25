@@ -26,13 +26,13 @@ import (
 	"tillbox/internal/store"
 )
 
-// pair 是两套 Tillbox：down 用上游易支付渠道把订单转给 up 收款。
+// pair 是两套 Tillbox：down 用第三方易支付渠道把订单转给 up 收款。
 type pair struct {
 	t    *testing.T
 	down *apptest.Env
 	up   *apptest.Env
 	um   *apptest.Merchant // up 上的商户，down 的渠道用它对接
-	dm   *apptest.Merchant // down 上的商户，用上游渠道
+	dm   *apptest.Merchant // down 上的商户，用第三方易支付渠道
 	ch   store.Channel
 	a    *apptest.Admin
 }
@@ -58,9 +58,9 @@ func setup(t *testing.T, version int) *pair {
 		cfg.PID, cfg.PrivateKey, cfg.PlatformPublicKey = um.PID(), priv, pf.PublicKey
 	}
 	a := down.Login()
-	res := a.Call("POST", "/web-api/admin/channels", map[string]any{"type": store.ChannelEpay, "name": "上游 A", "enabled": true, "config": cfg})
+	res := a.Call("POST", "/web-api/admin/channels", map[string]any{"type": store.ChannelEpay, "name": "第三方平台 A", "enabled": true, "config": cfg})
 	if res.Status != http.StatusOK {
-		t.Fatalf("建上游渠道：%d %s", res.Status, res.Body)
+		t.Fatalf("建第三方易支付渠道：%d %s", res.Status, res.Body)
 	}
 	var out struct {
 		Channel store.Channel `json:"channel"`
@@ -68,11 +68,23 @@ func setup(t *testing.T, version int) *pair {
 	if err := json.Unmarshal(res.Body, &out); err != nil {
 		t.Fatal(err)
 	}
-	dm := down.NewMerchant(&merchant.Input{Name: "下游商户", Enabled: true, ChannelID: out.Channel.ID})
+	dm := down.NewMerchant(&merchant.Input{Name: "下游商户", Enabled: true, Routes: map[string]int64{"alipay": out.Channel.ID}})
 	if dm.Channel != out.Channel.Key() {
 		t.Fatalf("商户渠道 %s", dm.Channel)
 	}
 	return &pair{t: t, down: down, up: up, um: um, dm: dm, ch: out.Channel, a: a}
+}
+
+// open 让 down 的商户这几种支付方式都走第三方易支付渠道。
+func (p *pair) open(types ...string) {
+	p.t.Helper()
+	routes := map[string]int64{}
+	for _, typ := range types {
+		routes[typ] = p.ch.ID
+	}
+	if _, err := p.down.App.Merchants.Update(p.down.Ctx, p.dm.ID, merchant.Input{Name: "下游商户", Enabled: true, Routes: routes}, -1); err != nil {
+		p.t.Fatalf("改商户的收款方式：%v", err)
+	}
 }
 
 // order 在 down 下单，返回 down 的订单和 up 上对应的订单。
@@ -87,7 +99,7 @@ func (p *pair) order(out, money string) (*store.Order, *store.Order) {
 	o := p.down.Order(fmt.Sprint(res["trade_no"]))
 	uo, err := p.up.App.Orders.Find(p.up.Ctx, p.um.ID, "", o.TradeNo)
 	if err != nil {
-		p.t.Fatalf("上游没有对应订单：%v", err)
+		p.t.Fatalf("第三方平台没有对应订单：%v", err)
 	}
 	return o, uo
 }
@@ -126,7 +138,7 @@ func TestNotifyConfirms(t *testing.T) {
 			p := setup(t, version)
 			o, uo := p.order("D1", "10.00")
 			if o.PayAmount != 1000 || o.Amount != 1000 {
-				t.Errorf("上游渠道按原价付款：%+v", o)
+				t.Errorf("第三方易支付渠道按原价付款：%+v", o)
 			}
 			up := p.payment(o)
 			if up.TradeNo != uo.TradeNo || up.PayType != "alipay" || up.InfoType != store.InfoQRCode || !strings.Contains(up.Info, "/cashier/"+uo.TradeNo) {
@@ -275,14 +287,14 @@ func TestConfirmAnomalies(t *testing.T) {
 	if p.down.Order(o.TradeNo).Status != store.OrderPending {
 		t.Error("少付后订单仍待支付")
 	}
-	// 同一个上游单号再来一次：幂等，不再记异常。
+	// 同一个第三方平台单号再来一次：幂等，不再记异常。
 	if ok, err := l.Confirm(ctx, o.ID, channel.Paid{TradeNo: "U-1", OutTradeNo: o.TradeNo, Amount: 700}); err != nil || ok {
 		t.Fatal(ok, err)
 	}
 	if as := anomalies(t, p.down, o.ID); len(as) != 1 {
 		t.Errorf("重复确认不该再记异常：%+v", as)
 	}
-	// 正确金额到账，再来一个不同的上游单号：重复付款。
+	// 正确金额到账，再来一个不同的第三方平台单号：重复付款。
 	if ok, err := l.Confirm(ctx, o.ID, channel.Paid{TradeNo: "U-2", OutTradeNo: o.TradeNo, Amount: 800}); err != nil || !ok {
 		t.Fatal(ok, err)
 	}
@@ -359,10 +371,10 @@ func TestBadNotify(t *testing.T) {
 	}
 }
 
-// 预下单失败：向调用方报通道不可用，订单保持待支付；上游恢复后用同一订单号重试会再预下单。
+// 预下单失败：向调用方报通道不可用，订单保持待支付；第三方平台恢复后用同一订单号重试会再预下单。
 func TestPrepayFailure(t *testing.T) {
 	p := setup(t, 1)
-	// 把 up 上的商户停用，上游会拒绝下单。
+	// 把 up 上的商户停用，第三方平台会拒绝下单。
 	if _, err := p.up.DB().NewUpdate().Model((*store.Merchant)(nil)).Set("enabled = ?", false).Where("id = ?", p.um.ID).Exec(p.up.Ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -441,14 +453,15 @@ func postJSON(t *testing.T, e *apptest.Env, path string, body any) (*apptest.Res
 	return res, m
 }
 
-// 渠道开放多种方式、调用方没传 type：付款人在收银台选定后才预下单。
+// 商户开放多种方式、调用方没传 type：付款人在收银台选定后才预下单，选定后不能再换。
 func TestCashierChoosesType(t *testing.T) {
 	p := setup(t, 1)
 	cfg := upstream.Input{APIURL: p.up.URL, Version: 1, PID: p.um.PID(), Types: []string{"alipay", "wxpay"}}
-	res := p.a.Call("PUT", fmt.Sprintf("/web-api/admin/channels/%d", p.ch.ID), map[string]any{"name": "上游 A", "enabled": true, "config": cfg})
+	res := p.a.Call("PUT", fmt.Sprintf("/web-api/admin/channels/%d", p.ch.ID), map[string]any{"name": "第三方平台 A", "enabled": true, "config": cfg})
 	if res.Status != http.StatusOK {
 		t.Fatalf("改渠道：%d %s", res.Status, res.Body)
 	}
+	p.open("alipay", "wxpay")
 	form := p.dm.SignMD5(map[string]string{"out_trade_no": "S1", "notify_url": p.down.Hook.URL + "/n", "return_url": p.down.Hook.URL + "/r", "name": "测试商品", "money": "2.00"})
 	if res := p.down.PostForm("/submit.php", form); res.Status != http.StatusSeeOther {
 		t.Fatalf("跳转下单：%d %s", res.Status, res.Body)
@@ -457,8 +470,8 @@ func TestCashierChoosesType(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if o.PayType != "" {
-		t.Errorf("没传 type 时留给付款人选：%q", o.PayType)
+	if o.PayType != "" || o.Channel != "" {
+		t.Errorf("没传 type 时留给付款人选：%q %q", o.Channel, o.PayType)
 	}
 	if up, _ := p.down.App.Confirm.Payment(p.down.Ctx, o.ID); up != nil {
 		t.Fatal("选支付方式之前不该预下单")
@@ -472,9 +485,12 @@ func TestCashierChoosesType(t *testing.T) {
 	if r, m := postJSON(t, p.down, base+"/pay", map[string]string{"type": "qqpay"}); r.Status != http.StatusBadRequest {
 		t.Errorf("没开放的方式：%d %v", r.Status, m)
 	}
-	// up 只收支付宝：选微信时上游拒绝。
+	// up 只收支付宝：选微信时第三方平台拒绝，付款人没拿到付款码，选择撤回，还能换。
 	if r, m := postJSON(t, p.down, base+"/pay", map[string]string{"type": "wxpay"}); r.Status != http.StatusBadGateway || !strings.Contains(fmt.Sprint(m["error"]), "换一种支付方式") {
-		t.Errorf("上游拒绝：%d %v", r.Status, m)
+		t.Errorf("第三方平台拒绝：%d %v", r.Status, m)
+	}
+	if cur := p.down.Order(o.TradeNo); cur.Channel != "" || cur.PayType != "" {
+		t.Errorf("预下单失败后应撤回选择：%q %q", cur.Channel, cur.PayType)
 	}
 	r, m := postJSON(t, p.down, base+"/pay", map[string]string{"type": "alipay"})
 	g, _ := m["guide"].(map[string]any)
@@ -488,8 +504,8 @@ func TestCashierChoosesType(t *testing.T) {
 	if r, m := postJSON(t, p.down, base+"/go", nil); r.Status != http.StatusOK || m["url"] != g["qrcode"] {
 		t.Errorf("去付款：%d %v", r.Status, m)
 	}
-	// 再换微信被上游拒绝：订单还是支付宝，原来的付款信息照样能用。
-	if r, m := postJSON(t, p.down, base+"/pay", map[string]string{"type": "wxpay"}); r.Status != http.StatusBadGateway {
+	// 选定后不能再换：不问第三方平台，订单还是支付宝，原来的付款信息照样能用。
+	if r, m := postJSON(t, p.down, base+"/pay", map[string]string{"type": "wxpay"}); r.Status != http.StatusConflict || !strings.Contains(fmt.Sprint(m["error"]), "取消订单") {
 		t.Errorf("换微信：%d %v", r.Status, m)
 	}
 	if view := p.down.Get(base).JSON(t); view["pay_type"] != "alipay" || view["guide"] == nil {
@@ -524,7 +540,7 @@ func TestCashierChoosesType(t *testing.T) {
 	}
 }
 
-// 上游的单笔限额：被拒时自动识别，之后下单和收银台提前拦下并说明原因；过期后交给上游，下单成功就放宽。
+// 第三方平台的单笔限额：被拒时自动识别，之后下单和收银台提前拦下并说明原因；过期后交给第三方平台，下单成功就放宽。
 func TestUpstreamLimits(t *testing.T) {
 	p := setup(t, 1)
 	// 在 up 前面挡一层：低于最低金额的预下单按彩虹易支付的原话拒绝，其余转给 up。
@@ -559,9 +575,10 @@ func TestUpstreamLimits(t *testing.T) {
 		return calls
 	}
 	cfg := upstream.Input{APIURL: front.URL, Version: 1, PID: p.um.PID(), Key: p.um.Key, Types: []string{"alipay", "wxpay"}}
-	if res := p.a.Call("PUT", fmt.Sprintf("/web-api/admin/channels/%d", p.ch.ID), map[string]any{"name": "上游 A", "enabled": true, "config": cfg}); res.Status != http.StatusOK {
+	if res := p.a.Call("PUT", fmt.Sprintf("/web-api/admin/channels/%d", p.ch.ID), map[string]any{"name": "第三方平台 A", "enabled": true, "config": cfg}); res.Status != http.StatusOK {
 		t.Fatalf("改渠道：%d %s", res.Status, res.Body)
 	}
+	p.open("alipay", "wxpay")
 	mapi := func(out, typ, money string) map[string]any {
 		t.Helper()
 		params := map[string]string{"out_trade_no": out, "notify_url": p.down.Hook.URL + "/n", "name": "测试商品", "money": money, "clientip": "1.1.1.1"}
@@ -589,13 +606,13 @@ func TestUpstreamLimits(t *testing.T) {
 				return c.Config.Limits
 			}
 		}
-		t.Fatal("渠道列表里没有上游渠道")
+		t.Fatal("渠道列表里没有第三方易支付渠道")
 		return nil
 	}
 
-	// 第一次：上游拒绝，原因直接告诉调用方；记下限额，不算渠道失败。
+	// 第一次：第三方平台拒绝，原因直接告诉调用方；记下限额，不算渠道失败。
 	if res := mapi("L1", "alipay", "0.01"); fmt.Sprint(res["code"]) != "-1" || res["msg"] != "支付宝单笔最低 0.30 元" || count() != 1 {
-		t.Fatalf("低于上游最低金额：%v，上游收到 %d 次", res, count())
+		t.Fatalf("低于第三方平台最低金额：%v，第三方平台收到 %d 次", res, count())
 	}
 	if st := p.down.App.Confirm.Status(p.ch.Key()); st.PrepayFailures != 0 || st.PrepayErr != "" {
 		t.Errorf("金额被拒不算渠道失败：%+v", st)
@@ -603,9 +620,9 @@ func TestUpstreamLimits(t *testing.T) {
 	if l := limits()["alipay"]; l.Min != "0.30" || l.MinAt == 0 {
 		t.Fatalf("后台看到的限额：%+v", limits())
 	}
-	// 再下同样金额的单：不问上游，也不建单；够最低金额的照常。
+	// 再下同样金额的单：不问第三方平台，也不建单；够最低金额的照常。
 	if res := mapi("L2", "alipay", "0.01"); fmt.Sprint(res["code"]) != "-1" || res["msg"] != "支付宝单笔最低 0.30 元" || count() != 1 {
-		t.Fatalf("已知限额：%v，上游收到 %d 次", res, count())
+		t.Fatalf("已知限额：%v，第三方平台收到 %d 次", res, count())
 	}
 	if _, err := p.down.App.Orders.Find(p.down.Ctx, p.dm.ID, "", "L2"); err == nil {
 		t.Error("已知超出限额时不该建单")
@@ -638,10 +655,10 @@ func TestUpstreamLimits(t *testing.T) {
 		t.Fatalf("收银台的支付方式：%v", u)
 	}
 	if r, m := postJSON(t, p.down, base+"/pay", map[string]string{"type": "alipay"}); r.Status != http.StatusUnprocessableEntity || m["error"] != "支付宝单笔最低 0.30 元，请换一种支付方式" || count() != 2 {
-		t.Errorf("选支付宝：%d %v，上游收到 %d 次", r.Status, m, count())
+		t.Errorf("选支付宝：%d %v，第三方平台收到 %d 次", r.Status, m, count())
 	}
 	if r, m := postJSON(t, p.down, base+"/pay", map[string]string{"type": "wxpay"}); r.Status != http.StatusUnprocessableEntity || m["error"] != "微信支付单笔最低 0.30 元，请换一种支付方式" || count() != 3 {
-		t.Errorf("选微信：%d %v，上游收到 %d 次", r.Status, m, count())
+		t.Errorf("选微信：%d %v，第三方平台收到 %d 次", r.Status, m, count())
 	}
 	// 每种方式都低于最低金额：不建单，说明各自的限额。
 	form = p.dm.SignMD5(map[string]string{"out_trade_no": "L5", "notify_url": p.down.Hook.URL + "/n", "return_url": p.down.Hook.URL + "/r", "name": "测试商品", "money": "0.01"})
@@ -649,7 +666,7 @@ func TestUpstreamLimits(t *testing.T) {
 		t.Errorf("每种方式都超出限额：%d %s", res.Status, res.Body)
 	}
 
-	// 过了 24 小时：不再提前拦下；上游已经放宽，下单成功后清掉支付宝的限额。
+	// 过了 24 小时：不再提前拦下；第三方平台已经放宽，下单成功后清掉支付宝的限额。
 	var row store.Channel
 	if err := p.down.DB().NewSelect().Model(&row).Where("id = ?", p.ch.ID).Scan(p.down.Ctx); err != nil {
 		t.Fatal(err)
@@ -676,14 +693,14 @@ func TestUpstreamLimits(t *testing.T) {
 	floor = 0
 	mu.Unlock()
 	if r, m := postJSON(t, p.down, base+"/pay", map[string]string{"type": "alipay"}); r.Status != http.StatusOK || count() != 4 {
-		t.Fatalf("上游放宽后选支付宝：%d %v", r.Status, m)
+		t.Fatalf("第三方平台放宽后选支付宝：%d %v", r.Status, m)
 	}
 	if l := limits(); len(l) != 1 || l["wxpay"].Min != "0.30" {
 		t.Errorf("下单成功后放宽支付宝，微信不变：%+v", l)
 	}
 }
 
-// 付款人申诉上游订单“未到账”：AI 只能请求查单，不能用流水补认；查单确认后自动到账。
+// 付款人申诉第三方平台订单“未到账”：AI 只能请求查单，不能用流水补认；查单确认后自动到账。
 func TestAssistanceRechecksUpstream(t *testing.T) {
 	p := setup(t, 1)
 	o, uo := p.order("AI1", "6.00")
@@ -701,7 +718,7 @@ func TestAssistanceRechecksUpstream(t *testing.T) {
 		}
 		_ = json.Unmarshal([]byte(req.Messages[1].Content), &facts)
 		allowed = facts.Allowed
-		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": `{"action":"recheck","reason":"请上游查单"}`}}}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": `{"action":"recheck","reason":"请第三方平台查单"}`}}}})
 	}))
 	t.Cleanup(model.Close)
 	cfg := settings.Automation{Enabled: true, BaseURL: model.URL + "/v1", Model: "m", APIKey: "k", AutoLink: true, AutoNotify: true, AutoRecheck: true, IntervalSeconds: 30, MaxAttempts: 2}
@@ -712,7 +729,7 @@ func TestAssistanceRechecksUpstream(t *testing.T) {
 	if err := p.down.App.Confirm.RunOnce(p.down.Ctx); err != nil {
 		t.Fatal(err)
 	}
-	p.up.Pay(uo.TradeNo) // 上游已收款，但回调没送到
+	p.up.Pay(uo.TradeNo) // 第三方平台已收款，但回调没送到
 	_, c, err := p.down.App.Assistance.Submit(p.down.Ctx, o.ID, assistance.ClaimInput{
 		Kind: "not_received", PaymentRef: "2026101700000000000009", Amount: o.PayAmount, PaidAt: store.Now(),
 	})
@@ -723,7 +740,7 @@ func TestAssistanceRechecksUpstream(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !slices.Equal(allowed, []string{"manual", "recheck"}) {
-		t.Errorf("上游订单可选动作：%v", allowed)
+		t.Errorf("第三方平台订单可选动作：%v", allowed)
 	}
 	var got store.AssistanceCase
 	if err := p.down.DB().NewSelect().Model(&got).Where("id = ?", c.ID).Scan(p.down.Ctx); err != nil {
@@ -741,7 +758,7 @@ func TestAssistanceRechecksUpstream(t *testing.T) {
 	}
 }
 
-// 后台：订单详情带上游预下单记录和渠道名；订单和流水能按渠道筛选；渠道列表带上游状态。
+// 后台：订单详情带第三方平台预下单记录和渠道名；订单和流水能按渠道筛选；渠道列表带第三方平台状态。
 func TestAdminViews(t *testing.T) {
 	p := setup(t, 1)
 	o, uo := p.order("V1", "2.00")
@@ -764,7 +781,7 @@ func TestAdminViews(t *testing.T) {
 		Upstream *store.UpstreamPayment `json:"upstream"`
 	}
 	get(fmt.Sprintf("/web-api/admin/orders/%d", o.ID), &detail)
-	if detail.Order.ChannelName != "上游 A" || detail.Upstream == nil || detail.Upstream.TradeNo != uo.TradeNo {
+	if detail.Order.ChannelName != "第三方平台 A" || detail.Upstream == nil || detail.Upstream.TradeNo != uo.TradeNo {
 		t.Errorf("订单详情：%+v %+v", detail.Order, detail.Upstream)
 	}
 	var page struct {
@@ -799,6 +816,6 @@ func TestAdminViews(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Error("渠道列表里没有上游渠道")
+		t.Error("渠道列表里没有第三方易支付渠道")
 	}
 }

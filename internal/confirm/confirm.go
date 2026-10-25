@@ -1,4 +1,4 @@
-// Package confirm 处理确认型渠道（上游易支付）的订单：预下单、收回调、定时查单，确认后交给流水入账。
+// Package confirm 处理确认型渠道（第三方易支付）的订单：预下单、收回调、定时查单，确认后交给流水入账。
 // 规则见 docs/channels.md 第 3.3 节。
 package confirm
 
@@ -37,17 +37,17 @@ const (
 )
 
 var (
-	ErrNotConfirmer = errors.New("这个订单的渠道不是上游易支付渠道")
-	ErrNotPending   = errors.New("订单已经不是待支付状态")
+	ErrNotConfirmer = errors.New("这个订单的渠道不是第三方易支付渠道")
+	ErrNotPending   = order.ErrNotPending
 )
 
-// BadNotify 是不合格的回调（验签失败、订单对不上等），回复上游 fail。
+// BadNotify 是不合格的回调（验签失败、订单对不上等），回复第三方平台 fail。
 type BadNotify struct{ Err error }
 
 func (e *BadNotify) Error() string { return e.Err.Error() }
 func (e *BadNotify) Unwrap() error { return e.Err }
 
-// Status 是一个上游渠道最近的预下单、查单和回调情况，给后台和告警用。存在设置表里，重启后接着用。
+// Status 是一个第三方易支付渠道最近的预下单、查单和回调情况，给后台和告警用。存在设置表里，重启后接着用。
 type Status struct {
 	Key            string `json:"key"`
 	ChannelID      int64  `json:"channel_id"`
@@ -89,7 +89,7 @@ func New(db *bun.DB, st *settings.Service, orders *order.Service, l *ledger.Ledg
 	}
 }
 
-// Load 从库里读回各上游渠道的状态，启动时在 Run 之前调用。
+// Load 从库里读回各第三方易支付渠道的状态，启动时在 Run 之前调用。
 func (s *Service) Load(ctx context.Context) error {
 	for _, key := range s.keys() {
 		st := Status{Key: key, ChannelID: store.ChannelID(key)}
@@ -177,9 +177,9 @@ func (s *Service) Payment(ctx context.Context, orderID int64) (*store.UpstreamPa
 	return &up, nil
 }
 
-// Prepare 按支付方式向上游预下单。同一订单已经用这个支付方式预下单过的，直接返回原结果；
-// 换了支付方式就重新预下单（上游同一订单号允许换方式）。预下单成功后才改订单的支付方式，
-// 失败时订单还是原来的方式，原来的预下单结果照样能用。base 是本系统的对外地址。
+// Prepare 按支付方式向第三方平台预下单。同一订单已经用这个支付方式预下单过的，直接返回原结果。
+// 订单定了支付方式就不能再换（返回 order.ErrChosen），要换只能取消订单重新下单；还没定方式的
+// （升级前建的、付款人还没选的订单）预下单成功后才记下方式。base 是本系统的对外地址。
 func (s *Service) Prepare(ctx context.Context, o *store.Order, typ, base string) (*store.UpstreamPayment, error) {
 	c, row := s.Confirmer(o.Channel)
 	if c == nil {
@@ -203,7 +203,11 @@ func (s *Service) Prepare(ctx context.Context, o *store.Order, typ, base string)
 		if err != nil {
 			return nil, err
 		}
-		if up != nil && up.PayType == typ && up.ChannelID == row.ID {
+		// 预下单成功过就是付款人真正选定的方式：同一种方式直接返回原结果，别的方式不能再换
+		if up != nil {
+			if up.PayType != typ || up.ChannelID != row.ID {
+				return nil, order.ErrChosen
+			}
 			// 旧版本预下单失败时也改了订单的支付方式，这里顺手改回和预下单记录一致
 			if cur.PayType != typ {
 				if err := setPayType(ctx, s.db, cur.ID, typ, store.Ms(s.Now())); err != nil {
@@ -211,6 +215,9 @@ func (s *Service) Prepare(ctx context.Context, o *store.Order, typ, base string)
 				}
 			}
 			return up, nil
+		}
+		if cur.PayType != "" && cur.PayType != typ {
+			return nil, order.ErrChosen
 		}
 		if l, ok := c.(channel.Limiter); ok {
 			if err := l.CheckAmount(typ, cur.Amount, s.Now()); err != nil {
@@ -221,17 +228,17 @@ func (s *Service) Prepare(ctx context.Context, o *store.Order, typ, base string)
 		next.PayType = typ
 		pay, err := c.Prepay(ctx, &next, base)
 		if lerr := s.channels.Learn(ctx, row.ID, typ, cur.Amount, err, s.Now()); lerr != nil {
-			slog.Error("记录上游限额失败", "channel", cur.Channel, "type", typ, "err", lerr)
+			slog.Error("记录第三方平台限额失败", "channel", cur.Channel, "type", typ, "err", lerr)
 		}
 		var amountErr *channel.AmountError
 		if errors.As(err, &amountErr) {
-			// 金额超出上游的单笔限额是正常的业务拒绝，不算渠道失败
-			slog.Info("上游拒绝：金额超出单笔限额", "trade_no", cur.TradeNo, "channel", cur.Channel, "type", typ, "err", err)
+			// 金额超出第三方平台的单笔限额是正常的业务拒绝，不算渠道失败
+			slog.Info("第三方平台拒绝：金额超出单笔限额", "trade_no", cur.TradeNo, "channel", cur.Channel, "type", typ, "err", err)
 			return nil, err
 		}
 		if err != nil {
 			s.record(o.Channel, func(st *Status, now int64) { st.PrepayErrAt, st.PrepayErr = now, err.Error(); st.PrepayFailures++ })
-			slog.Warn("上游预下单失败", "trade_no", cur.TradeNo, "channel", cur.Channel, "type", typ, "err", err)
+			slog.Warn("第三方平台预下单失败", "trade_no", cur.TradeNo, "channel", cur.Channel, "type", typ, "err", err)
 			return nil, err
 		}
 		s.record(o.Channel, func(st *Status, now int64) { st.PrepayOKAt, st.PrepayFailures = now, 0 })
@@ -279,16 +286,16 @@ func setPayType(ctx context.Context, db bun.IDB, id int64, typ string, now int64
 	return nil
 }
 
-// Notify 处理上游的回调：验签、核对订单，再交给流水确认到账。不合格的回调返回 *BadNotify。
+// Notify 处理第三方平台的回调：验签、核对订单，再交给流水确认到账。不合格的回调返回 *BadNotify。
 func (s *Service) Notify(ctx context.Context, channelID int64, p map[string]string) error {
 	key := store.ChannelKey(channelID)
 	c, _ := s.Confirmer(key)
 	if c == nil {
-		return &BadNotify{Err: errors.New("渠道不存在或不是上游易支付渠道")}
+		return &BadNotify{Err: errors.New("渠道不存在或不是第三方易支付渠道")}
 	}
 	bad := func(err error) error {
 		s.record(key, func(st *Status, now int64) { st.NotifyErrAt, st.NotifyErr = now, err.Error() })
-		slog.Warn("上游回调不合格", "channel", key, "out_trade_no", p["out_trade_no"], "err", err)
+		slog.Warn("第三方平台回调不合格", "channel", key, "out_trade_no", p["out_trade_no"], "err", err)
 		return &BadNotify{Err: err}
 	}
 	paid, err := c.VerifyNotify(p)
@@ -312,7 +319,7 @@ func (s *Service) Notify(ctx context.Context, channelID int64, p map[string]stri
 	return nil
 }
 
-// Check 向上游查一次订单，已付款就确认到账。返回是否确认了到账。
+// Check 向第三方平台查一次订单，已付款就确认到账。返回是否确认了到账。
 func (s *Service) Check(ctx context.Context, o *store.Order, up *store.UpstreamPayment) (bool, error) {
 	c, _ := s.Confirmer(o.Channel)
 	if c == nil {
@@ -354,10 +361,10 @@ func (s *Service) Run(ctx context.Context) {
 	defer t.Stop()
 	for {
 		if err := s.RunOnce(ctx); err != nil && ctx.Err() == nil {
-			slog.Error("上游查单失败", "err", err)
+			slog.Error("第三方平台查单失败", "err", err)
 		}
 		if err := s.Flush(ctx); err != nil && ctx.Err() == nil {
-			slog.Error("保存上游渠道状态失败", "err", err)
+			slog.Error("保存第三方易支付渠道状态失败", "err", err)
 		}
 		select {
 		case <-ctx.Done():
@@ -368,7 +375,7 @@ func (s *Service) Run(ctx context.Context) {
 	}
 }
 
-// keys 是全部上游渠道的实例键（停用的也算：已经下的单还要查）。
+// keys 是全部第三方易支付渠道的实例键（停用的也算：已经下的单还要查）。
 func (s *Service) keys() []string {
 	var keys []string
 	for _, row := range s.channels.List() {
@@ -437,7 +444,7 @@ func (s *Service) RunOnce(ctx context.Context) error {
 		o := &os[i]
 		up := byOrder[o.ID]
 		if up == nil {
-			continue // 还没选支付方式、没向上游下单
+			continue // 还没选支付方式、没向第三方平台下单
 		}
 		gap := ExpiredEvery
 		if order.Effective(o, now) == store.OrderPending {
@@ -456,7 +463,7 @@ func (s *Service) RunOnce(ctx context.Context) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			slog.Warn("上游查单失败", "trade_no", o.TradeNo, "channel", o.Channel, "err", err)
+			slog.Warn("第三方平台查单失败", "trade_no", o.TradeNo, "channel", o.Channel, "err", err)
 		}
 	}
 	return nil

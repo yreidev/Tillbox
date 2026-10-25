@@ -12,14 +12,14 @@ import (
 	"tillbox/internal/secret"
 )
 
-// Config 是上游易支付渠道的配置，存在渠道表的 config 列。
+// Config 是第三方易支付渠道的配置，存在渠道表的 config 列。
 type Config struct {
-	APIURL            string   `json:"api_url"` // 上游接口地址，不带末尾的 /
+	APIURL            string   `json:"api_url"` // 第三方平台接口地址，不带末尾的 /
 	Version           int      `json:"version"` // 1：MD5；2：RSA
 	PID               string   `json:"pid"`
 	Key               string   `json:"key"`         // V1 商户密钥，主密钥加密
 	PrivateKey        string   `json:"private_key"` // V2 商户私钥，主密钥加密
-	PublicKey         string   `json:"public_key"`  // V2 商户公钥，由私钥算出，交给上游
+	PublicKey         string   `json:"public_key"`  // V2 商户公钥，由私钥算出，交给第三方平台
 	PlatformPublicKey string   `json:"platform_public_key"`
 	Types             []string `json:"types"` // 开放的支付方式
 	// Limits 是各支付方式的单笔限额，见 limit.go。
@@ -31,7 +31,7 @@ func ParseConfig(raw string) (Config, error) {
 	c := Config{}
 	if strings.TrimSpace(raw) != "" {
 		if err := json.Unmarshal([]byte(raw), &c); err != nil {
-			return c, channel.Invalid("上游易支付渠道配置格式不对：%v", err)
+			return c, channel.Invalid("第三方易支付渠道配置格式不对：%v", err)
 		}
 	}
 	if c.Version == 0 {
@@ -40,7 +40,7 @@ func ParseConfig(raw string) (Config, error) {
 	return c, nil
 }
 
-// Input 是后台提交的上游易支付渠道配置。密钥留空表示保留原值。
+// Input 是后台提交的第三方易支付渠道配置。密钥留空表示保留原值。
 type Input struct {
 	APIURL            string   `json:"api_url"`
 	Version           int      `json:"version"`
@@ -88,7 +88,7 @@ func localHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// normalizeURL 校验上游接口地址：HTTPS（本机地址可以 HTTP），不带查询串和片段，去掉末尾的 /。
+// normalizeURL 校验第三方平台接口地址：HTTPS（本机地址可以 HTTP），不带查询串和片段，去掉末尾的 /。
 func normalizeURL(s string) (string, error) {
 	s = strings.TrimRight(strings.TrimSpace(s), "/")
 	for _, suffix := range []string{"/submit.php", "/mapi.php", "/api.php"} {
@@ -99,10 +99,10 @@ func normalizeURL(s string) (string, error) {
 	}
 	u, err := url.Parse(s)
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || len(s) > 500 {
-		return "", channel.Invalid("上游接口地址不对，应该是上游易支付的根地址，例如 https://pay.example.com/")
+		return "", channel.Invalid("第三方平台接口地址不对，应该是第三方易支付的根地址，例如 https://pay.example.com/")
 	}
 	if u.Scheme != "https" && !(u.Scheme == "http" && localHost(u.Hostname())) {
-		return "", channel.Invalid("上游接口地址必须是 https:// 开头（本机地址除外）")
+		return "", channel.Invalid("第三方平台接口地址必须是 https:// 开头（本机地址除外）")
 	}
 	return s, nil
 }
@@ -123,7 +123,7 @@ func Merge(box *secret.Box, cur string, in json.RawMessage, enabled bool) (strin
 	var v Input
 	if len(in) > 0 {
 		if err := json.Unmarshal(in, &v); err != nil {
-			return "", channel.Invalid("上游易支付配置格式不对")
+			return "", channel.Invalid("第三方易支付配置格式不对")
 		}
 	}
 	api, err := normalizeURL(v.APIURL)
@@ -141,14 +141,14 @@ func Merge(box *secret.Box, cur string, in json.RawMessage, enabled bool) (strin
 	if key != "" && (len(key) > 128 || strings.ContainsAny(key, " \t\r\n")) {
 		return "", channel.Invalid("商户密钥不超过 128 个字符，不能有空格")
 	}
-	// 换了上游地址就要重新填商户密钥：V1 查单会把密钥明文发给上游。
+	// 换了第三方平台地址就要重新填商户密钥：V1 查单会把密钥明文发给第三方平台。
 	if c.Key != "" && key == "" && api != c.APIURL {
-		return "", channel.Invalid("换了上游接口地址，要重新填写商户密钥")
+		return "", channel.Invalid("换了第三方平台接口地址，要重新填写商户密钥")
 	}
 	platform := strings.Join(strings.Fields(v.PlatformPublicKey), "")
 	if platform != "" {
 		if _, err := epay.ParsePublicKey(platform); err != nil {
-			return "", channel.Invalid("平台公钥格式不对：请粘贴上游给的「平台公钥」")
+			return "", channel.Invalid("平台公钥格式不对：请粘贴第三方平台给的「平台公钥」")
 		}
 	}
 	types := make([]string, 0, len(v.Types))
@@ -202,7 +202,7 @@ func Merge(box *secret.Box, cur string, in json.RawMessage, enabled bool) (strin
 func complete(c Config) error {
 	switch {
 	case c.APIURL == "" || c.PID == "":
-		return errText("上游接口地址和商户号没有填")
+		return errText("第三方平台接口地址和商户号没有填")
 	case c.Version == 1 && c.Key == "":
 		return errText("V1 要填商户密钥")
 	case c.Version == 2 && (c.PrivateKey == "" || c.PlatformPublicKey == ""):
@@ -217,7 +217,7 @@ type errText string
 
 func (e errText) Error() string { return string(e) }
 
-// Keypair 生成新的商户 RSA 密钥对（V2 用）：私钥加密写进配置，公钥返回给用户填到上游商户后台。
+// Keypair 生成新的商户 RSA 密钥对（V2 用）：私钥加密写进配置，公钥返回给用户填到第三方平台商户后台。
 func Keypair(box *secret.Box, cur string) (cfg, pub string, err error) {
 	c, err := ParseConfig(cur)
 	if err != nil {

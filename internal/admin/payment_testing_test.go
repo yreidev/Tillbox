@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"tillbox/internal/apptest"
+	"tillbox/internal/merchant"
 	ordersvc "tillbox/internal/order"
 	"tillbox/internal/store"
 )
@@ -80,6 +81,26 @@ func TestPaymentTesting(t *testing.T) {
 			}
 		})
 	}
+}
+
+// 支付测试按商户的收款方式选渠道：可以指定方式，没开的方式和一种都没开的商户直接说明。
+func TestPaymentTestingPayType(t *testing.T) {
+	e := apptest.New(t)
+	a := e.Login()
+	m := e.NewMerchant(nil)
+	call := func(typ string) *apptest.Response {
+		return a.Call("POST", "/web-api/admin/payment-tests", map[string]any{"merchant_id": m.ID, "money": "1.00", "version": ordersvc.V1, "notify_url": e.Hook.URL, "pay_type": typ})
+	}
+	r := call("alipay")
+	expect(t, r, http.StatusOK, "")
+	if o := decode[struct {
+		Order store.Order `json:"order"`
+	}](t, r).Order; o.Channel != e.ChannelKey() || o.PayType != "alipay" {
+		t.Errorf("指定支付宝：%+v", o)
+	}
+	expect(t, call("wxpay"), http.StatusBadRequest, "这个商户没有开放微信支付")
+	none := e.NewMerchant(&merchant.Input{Name: "没开方式", Enabled: true, Routes: map[string]int64{"alipay": 0}})
+	expect(t, a.Call("POST", "/web-api/admin/payment-tests", map[string]any{"merchant_id": none.ID, "money": "1.00", "version": ordersvc.V1, "notify_url": e.Hook.URL}), http.StatusBadRequest, "这个商户还没有开放任何支付方式")
 }
 
 type typeofOverview struct {

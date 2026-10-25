@@ -242,6 +242,66 @@ func ExternalStatus(o *store.Order) int {
 
 var ErrCannotClose = errors.New("该订单状态不支持关闭！")
 
+// ErrNotPending 表示订单已经不是待支付状态。
+var ErrNotPending = errors.New("订单已经不是待支付状态")
+
+// ErrChosen 表示订单已经定了支付方式，不能再换：要换只能取消订单，回商户重新下单。
+var ErrChosen = errors.New("这笔订单已经选了支付方式，不能再换")
+
+// Choose 给付款人还没选支付方式的订单（渠道为空）定下渠道和方式。noTail 为假时（按金额推断到账的渠道）
+// 当场在这个渠道分配加了尾数的应付金额。已经定成同样的渠道和方式时直接返回订单，定成别的时返回 ErrChosen。
+func (s *Service) Choose(ctx context.Context, id int64, channelKey, typ string, noTail bool) (*store.Order, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	o, err := s.ByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	now := s.Now()
+	nowMs := store.Ms(now)
+	switch {
+	case Effective(o, now) != store.OrderPending:
+		return nil, ErrNotPending
+	case o.Channel == channelKey && o.PayType == typ:
+		return o, nil
+	case o.Channel != "":
+		return nil, ErrChosen
+	}
+	payAmount := o.Amount
+	if !noTail {
+		pay, err := s.settings.Payment(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if payAmount, err = s.allocate(ctx, channelKey, o.Amount, pay.MaxTailCents, nowMs); err != nil {
+			return nil, err
+		}
+	}
+	res, err := s.db.NewUpdate().Model((*store.Order)(nil)).
+		Set("channel = ?", channelKey).Set("pay_type = ?", typ).Set("pay_amount = ?", payAmount).Set("updated_at = ?", nowMs).
+		Where("id = ?", id).Where("status = ?", store.OrderPending).Where("channel = ''").Exec(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return nil, ErrNotPending
+	}
+	o.Channel, o.PayType, o.PayAmount, o.UpdatedAt = channelKey, typ, payAmount, nowMs
+	return o, nil
+}
+
+// Unchoose 撤回 Choose 定下的渠道和支付方式，让付款人重新选：只用在选定后向第三方平台预下单失败、
+// 付款人还没拿到付款码的时候。订单已经换了别的方式、有了预下单记录或者不再是待支付时什么也不做。
+func (s *Service) Unchoose(ctx context.Context, id int64, channelKey, typ string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.NewUpdate().Model((*store.Order)(nil)).
+		Set("channel = ''").Set("pay_type = ''").Set("pay_amount = amount").Set("updated_at = ?", store.Ms(s.Now())).
+		Where("id = ?", id).Where("status = ?", store.OrderPending).Where("channel = ?", channelKey).Where("pay_type = ?", typ).
+		Where("NOT EXISTS (SELECT 1 FROM upstream_payments WHERE order_id = ?)", id).Exec(ctx)
+	return err
+}
+
 // Close 关闭未支付的订单。已过期或已关闭的订单再关一次也算成功。
 func (s *Service) Close(ctx context.Context, id int64) (*store.Order, error) {
 	s.mu.Lock()

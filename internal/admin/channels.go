@@ -27,7 +27,7 @@ type channelView struct {
 	Merchants    int64           `json:"merchants"`
 	DeleteBlock  string          `json:"delete_block"`       // 不能删除的原因，能删时为空
 	Ledger       *ledgerState    `json:"ledger,omitempty"`   // 推断型渠道的查账状态
-	Upstream     *confirm.Status `json:"upstream,omitempty"` // 上游渠道的预下单、查单和回调状态
+	Upstream     *confirm.Status `json:"upstream,omitempty"` // 第三方易支付渠道的预下单、查单和回调状态
 }
 
 func channelErr(err error) error {
@@ -62,7 +62,7 @@ func (a *API) channelViews(ctx context.Context) ([]channelView, error) {
 	if err := a.DB.NewSelect().Model((*store.Transaction)(nil)).ColumnExpr("channel AS k").ColumnExpr("COUNT(*) AS n").Group("channel").Scan(ctx, &txns); err != nil {
 		return nil, err
 	}
-	if err := a.DB.NewSelect().Model((*store.Merchant)(nil)).ColumnExpr("'ch' || CAST(channel_id AS TEXT) AS k").ColumnExpr("COUNT(*) AS n").Group("channel_id").Scan(ctx, &merchants); err != nil {
+	if err := a.DB.NewSelect().Model((*store.MerchantRoute)(nil)).ColumnExpr("'ch' || CAST(channel_id AS TEXT) AS k").ColumnExpr("COUNT(DISTINCT merchant_id) AS n").Group("channel_id").Scan(ctx, &merchants); err != nil {
 		return nil, err
 	}
 	count := func(rows []struct {
@@ -163,7 +163,7 @@ func (a *API) deleteChannel(w http.ResponseWriter, r *http.Request) error {
 }
 
 // channelKeypair 生成新的 RSA 密钥对：私钥加密存库，公钥返回给用户。
-// 经营码渠道上传到支付宝开放平台（应用公钥）；上游易支付 V2 填到上游的商户后台（商户公钥）。
+// 经营码渠道上传到支付宝开放平台（应用公钥）；第三方易支付 V2 填到第三方平台的商户后台（商户公钥）。
 func (a *API) channelKeypair(w http.ResponseWriter, r *http.Request) error {
 	id, err := pathID(r, "id")
 	if err != nil {

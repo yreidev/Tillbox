@@ -41,7 +41,7 @@ func merchantErr(err error) error {
 		return notFound(err.Error())
 	}
 	msg := err.Error()
-	for _, p := range []string{"商户", "RSA", "只收", "密钥类型", "域名", "备注", "这个商户", "所选"} {
+	for _, p := range []string{"商户", "RSA", "只收", "密钥类型", "域名", "备注", "这个商户", "渠道", "不认识"} {
 		if strings.HasPrefix(msg, p) {
 			return badRequest(msg)
 		}

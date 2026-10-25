@@ -170,7 +170,7 @@ function OverviewPage() {
             </div>
           ) : (
             <Typography.Paragraph size="sm" color="muted">
-              没有启用的经营码渠道。上游易支付渠道的查单和回调情况在{' '}
+              没有启用的经营码渠道。第三方易支付渠道的查单和回调情况在{' '}
               <RouterLink to="/admin/channels">支付渠道</RouterLink> 页查看。
             </Typography.Paragraph>
           )}

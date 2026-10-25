@@ -17,6 +17,7 @@ import (
 	"tillbox/internal/confirm"
 	"tillbox/internal/gateway"
 	"tillbox/internal/ledger"
+	"tillbox/internal/merchant"
 	"tillbox/internal/notify"
 	"tillbox/internal/order"
 	"tillbox/internal/settings"
@@ -29,6 +30,7 @@ type Deps struct {
 	Gateway    *gateway.Server
 	Admin      *admin.API
 	Orders     *order.Service
+	Merchants  *merchant.Service
 	Settings   *settings.Service
 	Channels   *registry.Registry
 	Pollers    *ledger.Pollers
@@ -126,7 +128,10 @@ func Handler(d Deps) http.Handler {
 	d.Gateway.Register(mux)
 	d.Admin.Register(mux)
 	registerSelfService(mux, d)
-	c := &cashier{orders: d.Orders, settings: d.Settings, channels: d.Channels, pollers: d.Pollers, confirm: d.Confirm, signer: d.Signer, baseURL: d.Gateway.BaseURL}
+	c := &cashier{
+		orders: d.Orders, merchants: d.Merchants, settings: d.Settings, channels: d.Channels, pollers: d.Pollers,
+		confirm: d.Confirm, signer: d.Signer, db: d.Admin.DB, baseURL: d.Gateway.BaseURL, clientIP: d.Admin.ClientIP,
+	}
 	c.register(mux)
 	mux.HandleFunc("/web-api/channels/{id}/notify", channelNotify(d.Confirm))
 	if d.Demo {

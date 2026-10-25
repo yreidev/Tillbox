@@ -35,9 +35,9 @@ interface Detail {
 
 const upstreamInfoText: Record<UpstreamPayment['info_type'], string> = {
   qrcode: '二维码（收银台展示）',
-  jump: '跳转到上游付款页',
+  jump: '跳转到第三方平台付款页',
   urlscheme: '唤起 App 付款',
-  submit: '跳转到上游收银台',
+  submit: '跳转到第三方平台收银台',
 }
 
 // progress 把订单从下单到通知商户的经过排成时间线。
@@ -250,7 +250,7 @@ export function OrderDetail({ id, onClose }: { id: number | null; onClose: () =>
                       { key: '商户订单号', value: <Copyable text={o.out_trade_no} mono /> },
                       { key: '商户', value: `${o.merchant_name || '已删除'}（${o.merchant_id}）` },
                       { key: '接口', value: o.version === 2 ? 'V2（RSA）' : 'V1（MD5）' },
-                      { key: '支付渠道', value: o.channel_name || o.channel },
+                      { key: '支付渠道', value: o.channel ? o.channel_name || o.channel : '付款人选了支付方式后才定' },
                       { key: '支付方式', value: o.pay_type ? payTypeLabel(o.pay_type) : '付款人还没选' },
                       { key: '订单金额', value: <span className="tb-num">{yuan(o.amount)} 元</span> },
                       o.amount !== o.pay_amount && {
@@ -283,10 +283,10 @@ export function OrderDetail({ id, onClose }: { id: number | null; onClose: () =>
                 </Section>
 
                 {d.upstream && (
-                  <Section title="上游预下单">
+                  <Section title="第三方平台预下单">
                     <Desc
                       data={[
-                        { key: '上游订单号', value: <Copyable text={d.upstream.trade_no} mono /> },
+                        { key: '第三方平台订单号', value: <Copyable text={d.upstream.trade_no} mono /> },
                         { key: '支付方式', value: payTypeLabel(d.upstream.pay_type) },
                         { key: '付款信息', value: upstreamInfoText[d.upstream.info_type] ?? d.upstream.info_type },
                         { key: '预下单时间', value: <span className="tb-num">{time(d.upstream.created_at)}</span> },
