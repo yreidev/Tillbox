@@ -751,6 +751,9 @@ func TestBackupAlerts(t *testing.T) {
 		t.Skip("只有 SQLite 有内置备份")
 	}
 	b.Now = c.Now
+	if err := e.App.Settings.SaveBackup(e.Ctx, settings.Backup{Enabled: true, Keep: 7}); err != nil {
+		t.Fatal(err)
+	}
 	keys := func() []string {
 		t.Helper()
 		ps, err := m.Checker.Check(e.Ctx)

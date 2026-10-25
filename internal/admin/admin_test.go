@@ -833,21 +833,25 @@ func TestSaveConflict(t *testing.T) {
 	ret.RawDays = 120
 	expect(t, a.CallIf("PUT", "/web-api/admin/operations/retention", ret, o.RetentionRevision), http.StatusOK, "")
 	expect(t, a.CallIf("PUT", "/web-api/admin/operations/retention", ret, o.RetentionRevision), http.StatusConflict, "")
-	if !o.Backup.Config.Enabled || o.Backup.Config.Keep != 7 {
-		t.Errorf("自动备份默认开、留 7 份：%+v", o.Backup.Config)
+	if o.Backup.Config.Enabled || o.Backup.Config.Keep != 7 {
+		t.Errorf("自动备份默认关、留 7 份：%+v", o.Backup.Config)
 	}
 	if e.App.Backup.Supported() {
 		expect(t, a.CallIf("PUT", "/web-api/admin/operations/backup", settings.Backup{Enabled: true, Keep: 0}, o.Backup.Revision), http.StatusBadRequest, "1–90")
-		expect(t, a.CallIf("PUT", "/web-api/admin/operations/backup", settings.Backup{Enabled: true, Keep: 3}, o.Backup.Revision), http.StatusOK, "")
-		expect(t, a.CallIf("PUT", "/web-api/admin/operations/backup", settings.Backup{Enabled: false, Keep: 3}, o.Backup.Revision), http.StatusConflict, "")
-		// 关掉再打开时，到期就马上备份一份，不用等下一轮。
-		expect(t, a.Call("PUT", "/web-api/admin/operations/backup", settings.Backup{Enabled: false, Keep: 3}), http.StatusOK, "")
 		if files, _ := e.App.Backup.List(); len(files) != 0 {
 			t.Fatalf("测试开始前不该有备份：%v", files)
 		}
+		// 打开时到期就马上备份一份，不用等下一轮。
+		expect(t, a.CallIf("PUT", "/web-api/admin/operations/backup", settings.Backup{Enabled: true, Keep: 3}, o.Backup.Revision), http.StatusOK, "")
+		if files, _ := e.App.Backup.List(); len(files) != 1 {
+			t.Errorf("打开自动备份后应马上备份一份，实际 %d 份", len(files))
+		}
+		expect(t, a.CallIf("PUT", "/web-api/admin/operations/backup", settings.Backup{Enabled: false, Keep: 3}, o.Backup.Revision), http.StatusConflict, "")
+		// 当天关掉再打开，不重复备份。
+		expect(t, a.Call("PUT", "/web-api/admin/operations/backup", settings.Backup{Enabled: false, Keep: 3}), http.StatusOK, "")
 		expect(t, a.Call("PUT", "/web-api/admin/operations/backup", settings.Backup{Enabled: true, Keep: 3}), http.StatusOK, "")
 		if files, _ := e.App.Backup.List(); len(files) != 1 {
-			t.Errorf("重新打开自动备份后应马上备份一份，实际 %d 份", len(files))
+			t.Errorf("当天重新打开不该再备份，实际 %d 份", len(files))
 		}
 	} else {
 		expect(t, a.CallIf("PUT", "/web-api/admin/operations/backup", settings.Backup{Enabled: true, Keep: 3}, o.Backup.Revision), http.StatusBadRequest, "SQLite")

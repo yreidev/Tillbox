@@ -26,9 +26,16 @@ func TestBackup(t *testing.T) {
 	now := time.Date(2026, 10, 25, 3, 0, 0, 0, time.UTC)
 	b.Now = func() time.Time { return now }
 
+	// 默认关着，不自动备份。
+	if st, err := b.Run(e.Ctx, false); err != nil || st.LastRunAt != 0 {
+		t.Fatalf("默认不该自动备份：%+v %v", st, err)
+	}
+	if err := e.App.Settings.SaveBackup(e.Ctx, settings.Backup{Enabled: true, Keep: 7}); err != nil {
+		t.Fatal(err)
+	}
 	st, err := b.Run(e.Ctx, false)
 	if err != nil || st.LastError != "" || st.LastFile != "tillbox-20261025T030000Z.db" {
-		t.Fatalf("第一次应马上备份：%+v %v", st, err)
+		t.Fatalf("打开后第一次应马上备份：%+v %v", st, err)
 	}
 	path := filepath.Join(b.Dir, st.LastFile)
 	info, err := os.Stat(path)
@@ -95,6 +102,9 @@ func TestBackupFailure(t *testing.T) {
 	}
 	now := time.Date(2026, 10, 25, 3, 0, 0, 0, time.UTC)
 	b.Now = func() time.Time { return now }
+	if err := e.App.Settings.SaveBackup(e.Ctx, settings.Backup{Enabled: true, Keep: 7}); err != nil {
+		t.Fatal(err)
+	}
 	// 备份目录的位置被一个普通文件占了。
 	if err := os.WriteFile(b.Dir, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)

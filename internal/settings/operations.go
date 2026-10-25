@@ -32,7 +32,7 @@ type Backup struct {
 }
 
 func (s *Service) Backup(ctx context.Context) (Backup, error) {
-	v := Backup{Enabled: true, Keep: 7}
+	v := Backup{Keep: 7}
 	_, err := s.load(ctx, KeyBackup, &v)
 	return v, err
 }

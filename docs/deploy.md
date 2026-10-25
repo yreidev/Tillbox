@@ -129,7 +129,7 @@ docker compose exec tillbox tillbox reset-password
 
 ## 8. 备份、恢复和升级
 
-用 SQLite 时，后台默认每天在数据目录的 `backups/` 下自动备份一份数据库，留最近 7 份；`docker compose exec tillbox tillbox backup` 可以马上备份一份。开关、保留份数和从这些备份恢复的步骤见 [operations.md](operations.md#自动备份)。这些备份和数据库在同一块盘上，也不含主密钥，异地备份仍需运维安排。
+用 SQLite 时，可以在后台打开自动备份（默认关闭），每天在数据目录的 `backups/` 下备份一份数据库，留最近 7 份；`docker compose exec tillbox tillbox backup` 可以马上备份一份。开关、保留份数和从这些备份恢复的步骤见 [operations.md](operations.md#自动备份)。这些备份和数据库在同一块盘上，也不含主密钥，异地备份仍需运维安排。
 
 异地备份最直接的 SQLite 方式是停服务后备份整个数据目录（含 `master.key`、`archives/`，以及可能存在的 `tillbox.db-wal`、`tillbox.db-shm`），完成后再启动；不要运行中只复制 `.db` 文件（运行中要备份就复制 `backups/` 里的文件）。PostgreSQL 使用数据库的一致性备份工具，并单独备份主密钥。若主密钥来自环境变量，备份同一个值。
 

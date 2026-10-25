@@ -69,7 +69,7 @@ function OperationsPage() {
   const d = q.data
   return (
     <div className="flex flex-col gap-4">
-      <PageHeader description="数据库每天自动备份一份；过了保留期的原始记录归档下线，归档批次可以下载。系统运行情况在监控页。每 15 秒刷新。" />
+      <PageHeader description="打开自动备份后数据库每天备份一份；过了保留期的原始记录归档下线，归档批次可以下载。系统运行情况在监控页。每 15 秒刷新。" />
       {q.isError && <Notice status="danger">{q.error.message}</Notice>}
       {q.isPending && <PageSkeleton rows={3} />}
       {d && (
