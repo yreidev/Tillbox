@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -80,6 +81,13 @@ func Open(ctx context.Context, driver, dsn string) (*bun.DB, error) {
 
 // Now 返回当前 Unix 毫秒，库里所有时间都用这个单位。
 func Now() int64 { return time.Now().UnixMilli() }
+
+// ErrConflict 是保存时发现记录在载入之后已经在别处改过（另一个标签页、另一个管理员或命令行）。
+// 后台接口把它转成 409，页面保留草稿，让管理员选择载入最新还是覆盖。
+var ErrConflict = errors.New("在你打开之后已经在别处改过")
+
+// Revise 是记录改动后的修改时间：一般是现在，但一定比原来的大，同一毫秒里连改两次版本也会变。
+func Revise(old int64) int64 { return max(Now(), old+1) }
 
 // Ms 把时间转成 Unix 毫秒。
 func Ms(t time.Time) int64 { return t.UnixMilli() }

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 
 	"tillbox/internal/admin"
 	"tillbox/internal/app"
+	"tillbox/internal/backup"
 	"tillbox/internal/config"
 	"tillbox/internal/secret"
 	"tillbox/internal/settings"
@@ -33,6 +35,7 @@ const usage = `用法：
   tillbox entry                   显示后台安全入口链接
   tillbox entry reset             换一个后台安全入口链接（没开时开启），旧链接失效
   tillbox entry off               关闭后台安全入口
+  tillbox backup                  马上备份一次 SQLite 数据库（升级前用正在运行的版本执行），保留份数按后台设置
   tillbox version                 显示版本
 
 配置全部走环境变量，见 docs/deploy.md。`
@@ -50,6 +53,8 @@ func main() {
 		err = resetPassword()
 	case "entry":
 		err = entry(os.Args[2:])
+	case "backup":
+		err = runBackup()
 	case "version", "-v", "--version":
 		fmt.Println("tillbox", version, revision)
 	case "help", "-h", "--help":
@@ -78,6 +83,7 @@ func open(ctx context.Context) (*config.Config, *bun.DB, *secret.Box, error) {
 		return nil, nil, nil, err
 	}
 	setupLog(cfg.LogLevel)
+	cfg.Version = version
 	key, err := secret.LoadKey(cfg.MasterKey, cfg.DataDir)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("读取主密钥失败：%w", err)
@@ -159,6 +165,25 @@ func entry(args []string) error {
 		base = "https://<你的域名>"
 	}
 	fmt.Printf("后台安全入口：%s\n", admin.EntryURL(base, e.Key))
+	return nil
+}
+
+// runBackup 马上做一次备份。打开数据库时会先执行迁移，所以升级前要用正在运行的旧版本执行（例如进容器里跑），
+// 不要用新版本的程序，否则备份里已经是迁移后的库。
+func runBackup() error {
+	ctx := context.Background()
+	cfg, db, box, err := open(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	b := backup.New(db, settings.New(db, box), cfg.DataDir)
+	v, err := b.Run(ctx, true)
+	if err != nil {
+		return err
+	}
+	_ = store.Audit(ctx, db, "命令行", "backup.run", v.LastFile, "")
+	fmt.Printf("已备份到 %s\n恢复时要配同一个主密钥（master.key 或 TILLBOX_MASTER_KEY），主密钥请另外保存。\n", filepath.Join(b.Dir, v.LastFile))
 	return nil
 }
 

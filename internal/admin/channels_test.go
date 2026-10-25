@@ -101,7 +101,7 @@ func TestChannelsAPI(t *testing.T) {
 	}
 
 	// 生成应用密钥对：返回公钥，私钥加密存库。
-	kp := decode[map[string]string](t, a.Call("POST", fmt.Sprintf("/web-api/admin/channels/%d/keypair", ali.ID), nil))
+	kp := decode[map[string]any](t, a.Call("POST", fmt.Sprintf("/web-api/admin/channels/%d/keypair", ali.ID), nil))
 	v = channels(t, a)[ali.ID]
 	if kp["public_key"] == "" || v.Config["app_public_key"] != kp["public_key"] || v.Config["has_private_key"] != true {
 		t.Errorf("生成密钥对：%v %+v", kp, v.Config)

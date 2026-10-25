@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"tillbox/internal/monitor"
+	"tillbox/internal/settings"
 	"tillbox/internal/store"
 )
 
@@ -21,6 +22,7 @@ type telegramView struct {
 	Chats       []store.TelegramChat `json:"chats"`
 	Binding     *monitor.Binding     `json:"binding"`
 	State       monitor.State        `json:"state"`
+	Revision    int64                `json:"revision"` // 保存时放进 If-Match，检查有没有在别处改过
 }
 
 func (a *API) telegramView(ctx context.Context) (telegramView, error) {
@@ -36,9 +38,13 @@ func (a *API) telegramView(ctx context.Context) (telegramView, error) {
 	if err != nil {
 		return telegramView{}, err
 	}
+	rev, err := a.Settings.Revision(ctx, settings.KeyTelegram)
+	if err != nil {
+		return telegramView{}, err
+	}
 	return telegramView{
 		Configured: cfg.Token != "", BotUsername: cfg.BotUsername, RemindHours: cfg.RemindHours, Paid: cfg.Paid, Claims: cfg.Claims,
-		Chats: chats, Binding: a.Monitor.Telegram.Binding(), State: state,
+		Chats: chats, Binding: a.Monitor.Telegram.Binding(), State: state, Revision: rev,
 	}, nil
 }
 
@@ -62,9 +68,16 @@ func (a *API) saveTelegram(w http.ResponseWriter, r *http.Request) error {
 	if in.RemindHours < 0 || in.RemindHours > 24 {
 		return badRequest("再提醒间隔须为 0–24 小时")
 	}
-	cfg, err := a.Monitor.Telegram.Configure(r.Context(), in.Token, in.Prefs)
+	var cfg settings.Telegram
+	_, err := a.guard(r, []string{settings.KeyTelegram}, func() error {
+		var err error
+		if cfg, err = a.Monitor.Telegram.Configure(r.Context(), in.Token, in.Prefs); err != nil {
+			return badRequest(err.Error())
+		}
+		return nil
+	})
 	if err != nil {
-		return badRequest(err.Error())
+		return err
 	}
 	_ = store.Audit(r.Context(), a.DB, a.actor(r), "telegram.update", "@"+cfg.BotUsername,
 		"到账："+onOff(cfg.Paid)+"，申诉："+onOff(cfg.Claims)+"，告警再提醒间隔 "+strconv.Itoa(cfg.RemindHours)+" 小时")

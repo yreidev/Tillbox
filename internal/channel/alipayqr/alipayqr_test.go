@@ -160,7 +160,7 @@ func update(t *testing.T, e *apptest.Env, ch *alipayqr.Channel, enabled bool, ed
 	edit(&in)
 	raw, _ := json.Marshal(in)
 	row := ch.Row()
-	if _, err := e.App.Channels.Update(e.Ctx, row.ID, registry.Input{Name: row.Name, Enabled: enabled, Config: raw}); err != nil {
+	if _, err := e.App.Channels.Update(e.Ctx, row.ID, registry.Input{Name: row.Name, Enabled: enabled, Config: raw}, -1); err != nil {
 		t.Fatal(err)
 	}
 }

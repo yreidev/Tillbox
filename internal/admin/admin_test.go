@@ -215,7 +215,7 @@ func TestMerchants(t *testing.T) {
 	}
 
 	// 重置密钥后旧密钥立即失效。
-	reset := decode[map[string]string](t, a.Call("POST", fmt.Sprintf("/web-api/admin/merchants/%d/reset-key", m.ID), nil))
+	reset := decode[map[string]any](t, a.Call("POST", fmt.Sprintf("/web-api/admin/merchants/%d/reset-key", m.ID), nil))
 	if reset["key"] == "" || reset["key"] == created.Key {
 		t.Fatalf("重置密钥：%v", reset)
 	}
@@ -223,7 +223,7 @@ func TestMerchants(t *testing.T) {
 	if res["code"] == json.Number("1") {
 		t.Error("旧密钥还能下单")
 	}
-	tm.Key = reset["key"]
+	tm.Key, _ = reset["key"].(string)
 	order(t, e, tm, "M3", "1.00", "x")
 
 	// 修改：停用后不能下单。
@@ -785,4 +785,96 @@ func TestUnknownAPI(t *testing.T) {
 	a := e.Login()
 	expect(t, a.Call("GET", "/web-api/admin/nothing", nil), http.StatusNotFound, "接口不存在")
 	expect(t, a.Call("DELETE", "/web-api/admin/orders", nil), http.StatusNotFound, "接口不存在")
+}
+
+// 带 If-Match 保存时，版本和库里的对不上返回 409，不覆盖；不带时照常保存（脚本、旧页面）。
+func TestSaveConflict(t *testing.T) {
+	e := apptest.New(t)
+	a := e.Login()
+	type revs struct {
+		Revisions map[string]int64 `json:"revisions"`
+	}
+	rev := decode[revs](t, a.Call("GET", "/web-api/admin/settings", nil)).Revisions["payment"]
+	if rev != 0 {
+		t.Fatalf("没存过的设置版本应为 0，实际 %d", rev)
+	}
+	p := settings.DefaultPayment()
+	p.OrderTTLSeconds = 600
+	r1 := decode[struct {
+		Revision int64 `json:"revision"`
+	}](t, a.CallIf("PUT", "/web-api/admin/settings/payment", p, rev)).Revision
+	if r1 <= 0 {
+		t.Fatalf("保存后应返回新版本，实际 %d", r1)
+	}
+	if got := decode[revs](t, a.Call("GET", "/web-api/admin/settings", nil)).Revisions["payment"]; got != r1 {
+		t.Errorf("读到的版本 %d 和保存返回的 %d 不一致", got, r1)
+	}
+	// 另一个标签页还拿着旧版本。
+	stale := settings.DefaultPayment()
+	stale.OrderTTLSeconds = 900
+	expect(t, a.CallIf("PUT", "/web-api/admin/settings/payment", stale, rev), http.StatusConflict, "别处改过")
+	if cur, _ := e.App.Settings.Payment(e.Ctx); cur.OrderTTLSeconds != 600 {
+		t.Fatalf("冲突时不能覆盖，实际有效期 %d", cur.OrderTTLSeconds)
+	}
+	expect(t, a.CallIf("PUT", "/web-api/admin/settings/payment", stale, r1), http.StatusOK, "")
+	expect(t, a.Call("PUT", "/web-api/admin/settings/payment", p), http.StatusOK, "")
+	expect(t, a.CallWith("PUT", "/web-api/admin/settings/payment", p, map[string]string{"If-Match": "abc"}), http.StatusBadRequest, "If-Match")
+
+	// 归档保留期和自动备份在“备份与归档”页，同样检查。
+	type ops struct {
+		RetentionRevision int64 `json:"retention_revision"`
+		Backup            struct {
+			Revision int64           `json:"revision"`
+			Config   settings.Backup `json:"config"`
+		} `json:"backup"`
+	}
+	o := decode[ops](t, a.Call("GET", "/web-api/admin/operations", nil))
+	ret, _ := e.App.Settings.Retention(e.Ctx)
+	ret.RawDays = 120
+	expect(t, a.CallIf("PUT", "/web-api/admin/operations/retention", ret, o.RetentionRevision), http.StatusOK, "")
+	expect(t, a.CallIf("PUT", "/web-api/admin/operations/retention", ret, o.RetentionRevision), http.StatusConflict, "")
+	if !o.Backup.Config.Enabled || o.Backup.Config.Keep != 7 {
+		t.Errorf("自动备份默认开、留 7 份：%+v", o.Backup.Config)
+	}
+	if e.App.Backup.Supported() {
+		expect(t, a.CallIf("PUT", "/web-api/admin/operations/backup", settings.Backup{Enabled: true, Keep: 0}, o.Backup.Revision), http.StatusBadRequest, "1–90")
+		expect(t, a.CallIf("PUT", "/web-api/admin/operations/backup", settings.Backup{Enabled: true, Keep: 3}, o.Backup.Revision), http.StatusOK, "")
+		expect(t, a.CallIf("PUT", "/web-api/admin/operations/backup", settings.Backup{Enabled: false, Keep: 3}, o.Backup.Revision), http.StatusConflict, "")
+		// 关掉再打开时，到期就马上备份一份，不用等下一轮。
+		expect(t, a.Call("PUT", "/web-api/admin/operations/backup", settings.Backup{Enabled: false, Keep: 3}), http.StatusOK, "")
+		if files, _ := e.App.Backup.List(); len(files) != 0 {
+			t.Fatalf("测试开始前不该有备份：%v", files)
+		}
+		expect(t, a.Call("PUT", "/web-api/admin/operations/backup", settings.Backup{Enabled: true, Keep: 3}), http.StatusOK, "")
+		if files, _ := e.App.Backup.List(); len(files) != 1 {
+			t.Errorf("重新打开自动备份后应马上备份一份，实际 %d 份", len(files))
+		}
+	} else {
+		expect(t, a.CallIf("PUT", "/web-api/admin/operations/backup", settings.Backup{Enabled: true, Keep: 3}, o.Backup.Revision), http.StatusBadRequest, "SQLite")
+	}
+
+	// 商户：版本是修改时间；重置密钥也算修改，返回新的修改时间。
+	m := decode[struct {
+		Merchant store.Merchant `json:"merchant"`
+	}](t, a.Call("POST", "/web-api/admin/merchants", merchant.Input{Name: "商城", Enabled: true})).Merchant
+	path := fmt.Sprintf("/web-api/admin/merchants/%d", m.ID)
+	saved := decode[struct {
+		Merchant store.Merchant `json:"merchant"`
+	}](t, a.CallIf("PUT", path, merchant.Input{Name: "商城二", Enabled: true}, m.UpdatedAt)).Merchant
+	if saved.UpdatedAt <= m.UpdatedAt {
+		t.Errorf("保存后修改时间应变大：%d → %d", m.UpdatedAt, saved.UpdatedAt)
+	}
+	expect(t, a.CallIf("PUT", path, merchant.Input{Name: "商城三", Enabled: true}, m.UpdatedAt), http.StatusConflict, "别处改过")
+	reset := decode[struct {
+		UpdatedAt int64 `json:"updated_at"`
+	}](t, a.Call("POST", path+"/reset-key", nil))
+	expect(t, a.CallIf("PUT", path, merchant.Input{Name: "商城三", Enabled: true}, saved.UpdatedAt), http.StatusConflict, "")
+	expect(t, a.CallIf("PUT", path, merchant.Input{Name: "商城三", Enabled: true}, reset.UpdatedAt), http.StatusOK, "")
+
+	// 渠道。
+	_, ch, _ := e.App.Channels.Get(store.ChannelID(e.ChannelKey()))
+	cpath := fmt.Sprintf("/web-api/admin/channels/%d", ch.ID)
+	in := map[string]any{"name": "演示渠道二", "enabled": true, "config": map[string]any{}}
+	expect(t, a.CallIf("PUT", cpath, in, ch.UpdatedAt), http.StatusOK, "")
+	expect(t, a.CallIf("PUT", cpath, in, ch.UpdatedAt), http.StatusConflict, "别处改过")
 }

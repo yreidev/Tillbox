@@ -23,7 +23,7 @@ type Automation struct {
 
 func (s *Service) Automation(ctx context.Context) (Automation, error) {
 	v := Automation{AutoRecheck: true, AutoNotify: true, AutoLink: true, IntervalSeconds: 60, MaxAttempts: 3}
-	_, err := s.load(ctx, "automation", &v)
+	_, err := s.load(ctx, KeyAutomation, &v)
 	if err == nil && v.APIKey != "" {
 		v.APIKey, err = s.box.Open(v.APIKey)
 	}
@@ -55,5 +55,5 @@ func (s *Service) SaveAutomation(ctx context.Context, v Automation) error {
 		}
 		v.APIKey = sealed
 	}
-	return s.save(ctx, "automation", v)
+	return s.save(ctx, KeyAutomation, v)
 }

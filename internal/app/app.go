@@ -13,6 +13,7 @@ import (
 
 	"tillbox/internal/admin"
 	"tillbox/internal/assistance"
+	"tillbox/internal/backup"
 	"tillbox/internal/channel/registry"
 	"tillbox/internal/config"
 	"tillbox/internal/confirm"
@@ -25,6 +26,7 @@ import (
 	"tillbox/internal/order"
 	"tillbox/internal/secret"
 	"tillbox/internal/settings"
+	"tillbox/internal/update"
 	"tillbox/internal/web"
 )
 
@@ -41,13 +43,17 @@ type App struct {
 	Confirm     *confirm.Service
 	Notifier    *notify.Worker
 	Maintenance *maintenance.Service
+	Backup      *backup.Service
 	Monitor     *monitor.Service
+	Update      *update.Service
 	Signer      *notify.Signer
 	Auth        *admin.Auth
 	Handler     http.Handler
 
 	// AdminPassword 是这次启动新建的管理员密码；已有管理员时为空。
 	AdminPassword string
+
+	demo bool
 }
 
 // New 组装应用：准备平台密钥、首次启动时建管理员。db 要已经迁移好。
@@ -61,12 +67,18 @@ func New(ctx context.Context, cfg *config.Config, db *bun.DB, box *secret.Box, u
 		return nil, err
 	}
 
-	a := &App{DB: db, Settings: st, AdminPassword: pw}
+	a := &App{DB: db, Settings: st, AdminPassword: pw, demo: cfg.Demo}
+	version := cfg.Version
+	if version == "" {
+		version = "dev"
+	}
+	a.Update = update.New(st, version)
 	a.Merchants = merchant.New(db, box)
 	a.Orders = order.New(db, st)
 	a.Signer = &notify.Signer{Merchants: a.Merchants, Settings: st}
 	a.Notifier = notify.NewWorker(db, a.Signer)
 	a.Maintenance = maintenance.New(db, st, cfg.DataDir)
+	a.Backup = backup.New(db, st, cfg.DataDir)
 	a.Orders.OnPaid = func() {
 		a.Notifier.Wake()
 		a.Monitor.Wake()
@@ -91,7 +103,7 @@ func New(ctx context.Context, cfg *config.Config, db *bun.DB, box *secret.Box, u
 		DB: db, Settings: st, Telegram: monitor.NewTelegram(db, st), PublicURL: cfg.PublicURL, Now: time.Now,
 		Checker: &monitor.Checker{
 			DB: db, Settings: st, Channels: a.Channels, Pollers: a.Pollers, Confirm: a.Confirm,
-			Maintenance: a.Maintenance, Assistance: a.Assistance, Now: time.Now,
+			Maintenance: a.Maintenance, Backup: a.Backup, Assistance: a.Assistance, Now: time.Now,
 		},
 	}
 	a.Assistance.OnClaim = a.Monitor.Wake
@@ -105,7 +117,7 @@ func New(ctx context.Context, cfg *config.Config, db *bun.DB, box *secret.Box, u
 	api := &admin.API{
 		Assistance: a.Assistance,
 		DB:         db, Auth: a.Auth, Merchants: a.Merchants, Orders: a.Orders, Ledger: a.Ledger, Pollers: a.Pollers, Confirm: a.Confirm, Channels: a.Channels,
-		Notifier: a.Notifier, Signer: a.Signer, Maintenance: a.Maintenance, Settings: st, Monitor: a.Monitor, ClientIP: proxy.ClientIP, Secure: proxy.Secure,
+		Notifier: a.Notifier, Signer: a.Signer, Maintenance: a.Maintenance, Backup: a.Backup, Update: a.Update, Settings: st, Monitor: a.Monitor, ClientIP: proxy.ClientIP, Secure: proxy.Secure,
 		BaseURL: proxy.BaseURL, Demo: cfg.Demo,
 	}
 	a.Handler = web.Handler(web.Deps{
@@ -116,7 +128,7 @@ func New(ctx context.Context, cfg *config.Config, db *bun.DB, box *secret.Box, u
 	return a, nil
 }
 
-// Run 跑后台任务（查账、上游查单、通知、订单过期、清理会话、监控告警），直到 ctx 结束。
+// Run 跑后台任务（查账、上游查单、通知、订单过期、清理会话、监控告警、归档和备份），直到 ctx 结束。
 func (a *App) Run(ctx context.Context) {
 	go a.Assistance.Run(ctx)
 	go a.Monitor.Run(ctx)
@@ -125,6 +137,17 @@ func (a *App) Run(ctx context.Context) {
 			slog.Error("历史记录归档失败，原始数据保留", "err", err)
 		}
 	})
+	if a.Backup.Supported() {
+		go every(ctx, time.Hour, func() {
+			if _, err := a.Backup.Run(ctx, false); err != nil && ctx.Err() == nil {
+				slog.Error("自动备份失败", "err", err)
+			}
+		})
+	}
+	// 演示模式只在本机和 CI 里跑，不向 GitHub 查新版本。
+	if !a.demo {
+		go a.Update.Run(ctx)
+	}
 	go a.Pollers.Run(ctx)
 	go a.Confirm.Run(ctx)
 	go a.Notifier.Run(ctx)

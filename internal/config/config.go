@@ -32,6 +32,8 @@ type Config struct {
 	LogLevel string `env:"TILLBOX_LOG_LEVEL" envDefault:"info"`
 
 	TrustedPrefixes []netip.Prefix `env:"-"`
+	// Version 是构建时写入的版本号（命令行填进来），开发构建为空。给后台显示和新版本提醒用。
+	Version string `env:"-"`
 }
 
 func Load() (*Config, error) {

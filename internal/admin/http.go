@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"tillbox/internal/store"
 )
@@ -43,10 +44,17 @@ func (e *httpError) Error() string { return e.msg }
 func badRequest(msg string) error { return &httpError{http.StatusBadRequest, msg} }
 func notFound(msg string) error   { return &httpError{http.StatusNotFound, msg} }
 
+// conflictMessage 是保存冲突（409）时给前端看的话，页面另外给出“载入最新”和“用我的修改覆盖”。
+const conflictMessage = "在你打开之后已经在别处改过（另一个标签页、另一个管理员或命令行）。你的修改还在页面上：可以载入最新的内容，或者用你的修改覆盖。"
+
 func writeError(w http.ResponseWriter, r *http.Request, err error) {
 	var he *httpError
 	if errors.As(err, &he) {
 		writeJSON(w, he.status, map[string]string{"error": he.msg})
+		return
+	}
+	if errors.Is(err, store.ErrConflict) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": conflictMessage})
 		return
 	}
 	slog.Error("后台接口出错", "path", r.URL.Path, "err", err)
@@ -136,4 +144,26 @@ func (a *API) open(h handler) http.HandlerFunc {
 			writeError(w, r, err)
 		}
 	}
+}
+
+// revision 读 If-Match 请求头里的版本（页面载入时的修改时间，毫秒）。没带时返回 -1，表示不检查冲突（脚本、旧页面）。
+func revision(r *http.Request) (int64, error) {
+	h := strings.Trim(r.Header.Get("If-Match"), `" `)
+	if h == "" {
+		return -1, nil
+	}
+	n, err := strconv.ParseInt(h, 10, 64)
+	if err != nil || n < 0 {
+		return 0, badRequest("If-Match 请求头格式不对")
+	}
+	return n, nil
+}
+
+// guard 在这组设置的版本还是页面载入时的版本时执行 save，返回保存后的新版本；版本变了返回 store.ErrConflict（409）。
+func (a *API) guard(r *http.Request, keys []string, save func() error) (int64, error) {
+	rev, err := revision(r)
+	if err != nil {
+		return 0, err
+	}
+	return a.Settings.Guard(r.Context(), rev, keys, save)
 }

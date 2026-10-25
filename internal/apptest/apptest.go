@@ -408,6 +408,18 @@ func (e *Env) Login() *Admin {
 // Call 调后台接口，自动带上 CSRF 头。
 func (a *Admin) Call(method, path string, body any) *Response {
 	a.e.T.Helper()
+	return a.CallWith(method, path, body, nil)
+}
+
+// CallIf 和 Call 一样，但带上 If-Match 版本（保存设置、渠道、商户时检查有没有在别处改过）。
+func (a *Admin) CallIf(method, path string, body any, revision int64) *Response {
+	a.e.T.Helper()
+	return a.CallWith(method, path, body, map[string]string{"If-Match": strconv.FormatInt(revision, 10)})
+}
+
+// CallWith 和 Call 一样，另外带上 header 里的请求头。
+func (a *Admin) CallWith(method, path string, body any, header map[string]string) *Response {
+	a.e.T.Helper()
 	var r io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -422,6 +434,9 @@ func (a *Admin) Call(method, path string, body any) *Response {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Tillbox", "1")
+	for k, v := range header {
+		req.Header.Set(k, v)
+	}
 	resp, err := a.client.Do(req)
 	if err != nil {
 		a.e.T.Fatal(err)

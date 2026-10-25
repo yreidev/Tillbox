@@ -42,7 +42,11 @@ func (a *API) assistance(w http.ResponseWriter, r *http.Request) error {
 	for _, row := range rows {
 		counts[row.Status] = row.N
 	}
-	ok(w, map[string]any{"config": cfg, "has_api_key": hasKey, "state": state, "items": cs, "total": total, "counts": counts})
+	rev, err := a.Settings.Revision(r.Context(), settings.KeyAutomation)
+	if err != nil {
+		return err
+	}
+	ok(w, map[string]any{"config": cfg, "has_api_key": hasKey, "revision": rev, "state": state, "items": cs, "total": total, "counts": counts})
 	return nil
 }
 func (a *API) saveAssistance(w http.ResponseWriter, r *http.Request) error {
@@ -53,11 +57,23 @@ func (a *API) saveAssistance(w http.ResponseWriter, r *http.Request) error {
 	if err := readJSON(r, &in); err != nil {
 		return err
 	}
+	rev, err := a.guard(r, []string{settings.KeyAutomation}, func() error { return a.saveAutomation(r, in.Automation, in.ClearKey) })
+	if err != nil {
+		return err
+	}
+	_ = store.Audit(r.Context(), a.DB, a.actor(r), "assistance.config", "", "更新模型配置及自动操作范围；不记录密钥")
+	a.Assistance.Wake()
+	ok(w, map[string]any{"revision": rev})
+	return nil
+}
+
+// saveAutomation 保存 AI 设置：没填 API Key 时沿用原来的（换了接口域名时必须重填或清除）。
+func (a *API) saveAutomation(r *http.Request, in settings.Automation, clearKey bool) error {
 	cur, err := a.Settings.Automation(r.Context())
 	if err != nil {
 		return err
 	}
-	if in.APIKey == "" && !in.ClearKey {
+	if in.APIKey == "" && !clearKey {
 		old, _ := url.Parse(cur.BaseURL)
 		next, _ := url.Parse(in.BaseURL)
 		if cur.APIKey != "" && (next == nil || old == nil || !strings.EqualFold(old.Host, next.Host) || old.Scheme != next.Scheme) {
@@ -65,15 +81,12 @@ func (a *API) saveAssistance(w http.ResponseWriter, r *http.Request) error {
 		}
 		in.APIKey = cur.APIKey
 	}
-	if in.ClearKey {
+	if clearKey {
 		in.APIKey = ""
 	}
-	if err = a.Assistance.Configure(r.Context(), in.Automation); err != nil {
+	if err = a.Assistance.Configure(r.Context(), in); err != nil {
 		return badRequest(err.Error())
 	}
-	_ = store.Audit(r.Context(), a.DB, a.actor(r), "assistance.config", "", "更新模型配置及自动操作范围；不记录密钥")
-	a.Assistance.Wake()
-	ok(w, map[string]any{})
 	return nil
 }
 func (a *API) testAssistance(w http.ResponseWriter, r *http.Request) error {

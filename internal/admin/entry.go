@@ -62,11 +62,12 @@ func (a *API) saveHome(w http.ResponseWriter, r *http.Request) error {
 	if in.Mode == settings.HomeRedirect && strings.TrimRight(in.URL, "/") == a.BaseURL(r) {
 		return badRequest("不能跳转到首页自己")
 	}
-	if err := a.Settings.SaveHome(r.Context(), in); err != nil {
+	rev, err := a.guard(r, []string{settings.KeyHome}, func() error { return a.Settings.SaveHome(r.Context(), in) })
+	if err != nil {
 		return err
 	}
 	_ = store.Audit(r.Context(), a.DB, a.actor(r), "settings.home", "", homeText[in.Mode])
-	ok(w, map[string]any{"home": in})
+	ok(w, map[string]any{"home": in, "revision": rev})
 	return nil
 }
 

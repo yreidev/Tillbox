@@ -72,7 +72,11 @@ func (a *API) updateMerchant(w http.ResponseWriter, r *http.Request) error {
 	if err := readJSON(r, &in); err != nil {
 		return err
 	}
-	m, err := a.Merchants.Update(r.Context(), id, in)
+	rev, err := revision(r)
+	if err != nil {
+		return err
+	}
+	m, err := a.Merchants.Update(r.Context(), id, in, rev)
 	if err != nil {
 		return merchantErr(err)
 	}
@@ -118,6 +122,11 @@ func (a *API) resetMerchantKey(w http.ResponseWriter, r *http.Request) error {
 		return merchantErr(err)
 	}
 	_ = store.Audit(r.Context(), a.DB, a.actor(r), "merchant.reset_key", fmt.Sprint(id), "重置了 MD5 密钥")
-	ok(w, map[string]any{"key": key})
+	m, err := a.Merchants.Get(r.Context(), id)
+	if err != nil {
+		return merchantErr(err)
+	}
+	// 重置密钥也算修改，编辑抽屉拿新的修改时间接着保存，不会误报冲突。
+	ok(w, map[string]any{"key": key, "updated_at": m.UpdatedAt})
 	return nil
 }

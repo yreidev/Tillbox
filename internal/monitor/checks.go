@@ -11,6 +11,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"tillbox/internal/assistance"
+	"tillbox/internal/backup"
 	"tillbox/internal/channel/registry"
 	"tillbox/internal/confirm"
 	"tillbox/internal/ledger"
@@ -31,6 +32,9 @@ type Problem struct {
 
 // 连续失败到这个次数才告警，偶尔一次网络抖动不算。
 const failureThreshold = 3
+
+// BackupStaleAfter 是自动备份多久没成功就告警：每天一份，留两小时余量。
+const BackupStaleAfter = 26 * time.Hour
 
 // UpstreamNotifyWindow 内收到过不合格的回调（且之后没有合格的）就告警。
 const UpstreamNotifyWindow = 24 * time.Hour
@@ -55,6 +59,7 @@ type Checker struct {
 	Pollers     *ledger.Pollers
 	Confirm     *confirm.Service
 	Maintenance *maintenance.Service
+	Backup      *backup.Service
 	Assistance  *assistance.Service
 	// Now 可以在测试里替换。
 	Now func() time.Time
@@ -187,6 +192,23 @@ func (c *Checker) Check(ctx context.Context) ([]Problem, error) {
 	}
 	if retention.Enabled && ms.LastOKAt > 0 && since(ms.LastOKAt) > 48*time.Hour {
 		add(Problem{Key: "maintenance_stale", Level: store.AlertWarning, Title: "归档任务超过 48 小时没有成功执行", Link: "/admin/operations"})
+	}
+
+	if c.Backup != nil && c.Backup.Supported() {
+		bc, err := c.Settings.Backup(ctx)
+		if err != nil {
+			return nil, err
+		}
+		bs, err := c.Backup.Status(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if bc.Enabled && bs.LastError != "" {
+			add(Problem{Key: "backup_error", Level: store.AlertWarning, Title: "自动备份失败", Detail: bs.LastError, Link: "/admin/operations"})
+		}
+		if bc.Enabled && bs.LastOKAt > 0 && since(bs.LastOKAt) > BackupStaleAfter {
+			add(Problem{Key: "backup_stale", Level: store.AlertWarning, Title: "自动备份超过 26 小时没有成功", Link: "/admin/operations"})
+		}
 	}
 	return out, nil
 }

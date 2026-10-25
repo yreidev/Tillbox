@@ -9,7 +9,7 @@
 
 个人后台只有一个管理员，登录只需要密码。方案和细节见[支付渠道](docs/channels.md)。
 
-后台“监控”页每 30 秒检查渠道、查账、上游、商户通知和流水异常，出问题时列出来并用 Telegram 机器人通知管理员，还有订单和通知的趋势图。收款到账、付款人提交申诉也会推送到 Telegram，在“设置 → 管理员通知”里开关。
+后台“监控”页每 30 秒检查渠道、查账、上游、商户通知和流水异常，出问题时列出来并用 Telegram 机器人通知管理员，还有订单和通知的趋势图。收款到账、付款人提交申诉也会推送到 Telegram，在“设置 → 管理员通知”里开关。用 SQLite 时后台每天自动备份一份数据库；有新的正式版时后台会提示。
 
 经营码是基于流水的推断收款；金额输错、迟付和重复付款需要人工处理。不支持 API 原路退款。已在实际环境验证过真实支付宝付款、调用方充值到账，以及重复通知不会重复加余额。
 
@@ -41,7 +41,7 @@ docker compose logs tillbox
 - [AI 自动处理与付款人自助](docs/ai-support.md)
 - [开发与验证](docs/development.md)
 - [发版](docs/release.md)
-- [后台支付测试、监控告警、巡检、归档与升级](docs/operations.md)
+- [后台支付测试、监控告警、巡检、备份、归档与升级](docs/operations.md)
 - [项目计划和当前进度](docs/PLAN.md)
 - [收款原理与局限](docs/research/collection-principle.md)
 - [易支付协议规格](docs/research/epay-protocol.md)及[兼容取舍](docs/research/epay-compat.md)

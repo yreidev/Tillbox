@@ -226,7 +226,8 @@ func (s *Service) Create(ctx context.Context, in Input) (*store.Merchant, string
 }
 
 // Update 修改商户资料（不改密钥）。
-func (s *Service) Update(ctx context.Context, id int64, in Input) (*store.Merchant, error) {
+// expected 是页面载入时的修改时间，和库里的对不上时返回 store.ErrConflict；为负数时不检查。
+func (s *Service) Update(ctx context.Context, id int64, in Input, expected int64) (*store.Merchant, error) {
 	if err := in.normalize(); err != nil {
 		return nil, err
 	}
@@ -245,11 +246,22 @@ func (s *Service) Update(ctx context.Context, id int64, in Input) (*store.Mercha
 	}
 	m.Name, m.RSAPublicKey, m.KeyType = in.Name, in.RSAPublicKey, in.KeyType
 	m.Domains, m.Enabled, m.Remark = in.Domains, in.Enabled, in.Remark
-	m.UpdatedAt = store.Now()
-	_, err := s.db.NewUpdate().Model(&m).
+	old := m.UpdatedAt
+	if expected >= 0 && old != expected {
+		return nil, store.ErrConflict
+	}
+	m.UpdatedAt = store.Revise(old)
+	// 只在修改时间还是刚才读到的值时更新，读和写之间被别人改了也算冲突。
+	res, err := s.db.NewUpdate().Model(&m).
 		Column("name", "rsa_public_key", "key_type", "domains", "enabled", "channel_id", "remark", "updated_at").
-		WherePK().Exec(ctx)
-	return &m, err
+		WherePK().Where("updated_at = ?", old).Exec(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, store.ErrConflict
+	}
+	return &m, nil
 }
 
 // ResetKey 重新生成 MD5 密钥，旧密钥立即失效。

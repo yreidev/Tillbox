@@ -9,6 +9,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"tillbox/internal/assistance"
+	"tillbox/internal/backup"
 	"tillbox/internal/channel/registry"
 	"tillbox/internal/confirm"
 	"tillbox/internal/ledger"
@@ -19,6 +20,7 @@ import (
 	"tillbox/internal/order"
 	"tillbox/internal/settings"
 	"tillbox/internal/store"
+	"tillbox/internal/update"
 )
 
 // API 是后台接口，挂在 /web-api/ 下。
@@ -35,6 +37,8 @@ type API struct {
 	Notifier    *notify.Worker
 	Signer      *notify.Signer
 	Maintenance *maintenance.Service
+	Backup      *backup.Service
+	Update      *update.Service
 	Settings    *settings.Service
 	Monitor     *monitor.Service
 	// ClientIP 返回请求方的真实 IP。
@@ -60,6 +64,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /web-api/admin/operations", a.wrap(a.operations))
 	mux.HandleFunc("PUT /web-api/admin/operations/retention", a.wrap(a.saveRetention))
 	mux.HandleFunc("POST /web-api/admin/operations/archive", a.wrap(a.runArchive))
+	mux.HandleFunc("PUT /web-api/admin/operations/backup", a.wrap(a.saveBackup))
+	mux.HandleFunc("POST /web-api/admin/operations/backup", a.wrap(a.runBackup))
 	mux.HandleFunc("GET /web-api/admin/operations/archives/{id}", a.wrap(a.downloadArchive))
 	mux.HandleFunc("GET /web-api/payment-test/notify", a.receivePaymentTest)
 	mux.HandleFunc("POST /web-api/admin/payment-tests", a.wrap(a.createPaymentTest))
@@ -106,6 +112,9 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /web-api/admin/settings/platform/regenerate", a.wrap(a.regeneratePlatform))
 	mux.HandleFunc("PUT /web-api/admin/settings/site", a.wrap(a.saveSite))
 	mux.HandleFunc("PUT /web-api/admin/settings/home", a.wrap(a.saveHome))
+	mux.HandleFunc("GET /web-api/admin/update", a.wrap(a.getUpdate))
+	mux.HandleFunc("PUT /web-api/admin/settings/update", a.wrap(a.saveUpdate))
+	mux.HandleFunc("POST /web-api/admin/update/check", a.wrap(a.checkUpdate))
 	mux.HandleFunc("POST /web-api/admin/settings/entry", a.wrap(a.resetEntry))
 	mux.HandleFunc("DELETE /web-api/admin/settings/entry", a.wrap(a.disableEntry))
 	mux.HandleFunc("GET /web-api/admin/settings/telegram", a.wrap(a.getTelegram))
@@ -165,7 +174,16 @@ func (a *API) me(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	ok(w, map[string]any{"site_name": site.Name, "demo": a.Demo, "api_url": a.BaseURL(r) + "/"})
+	// 侧栏底部的版本号和新版本提示；关了定时检查就不提示。
+	up, err := a.Update.View(r.Context())
+	if err != nil {
+		return err
+	}
+	newVersion := ""
+	if up.Check && up.Newer {
+		newVersion = up.Latest
+	}
+	ok(w, map[string]any{"site_name": site.Name, "demo": a.Demo, "api_url": a.BaseURL(r) + "/", "version": up.Current, "new_version": newVersion})
 	return nil
 }
 

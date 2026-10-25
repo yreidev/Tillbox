@@ -86,6 +86,58 @@ type Service struct {
 
 	mu    sync.RWMutex
 	cache map[string]string
+	guard sync.Mutex // 让 Guard 里的版本检查和保存不被同进程的另一次保存插进来
+}
+
+// ErrConflict 是保存时发现这组设置在载入之后已经在别处改过。
+var ErrConflict = store.ErrConflict
+
+// Revision 是一组设置的版本：这几个键最后一次保存的时刻（毫秒），都没存过时为 0。直接读库，不走缓存。
+func (s *Service) Revision(ctx context.Context, keys ...string) (int64, error) {
+	var rev int64
+	err := s.db.NewSelect().Model((*store.Setting)(nil)).ColumnExpr("COALESCE(MAX(updated_at), 0)").
+		Where("key IN (?)", bun.List(keys)).Scan(ctx, &rev)
+	return rev, err
+}
+
+// Guard 在这组设置的版本还是 expected 时执行 save，否则返回 ErrConflict；成功后返回新版本。
+// expected 为负数表示调用方没带版本（例如脚本），不检查直接保存。
+func (s *Service) Guard(ctx context.Context, expected int64, keys []string, save func() error) (int64, error) {
+	s.guard.Lock()
+	defer s.guard.Unlock()
+	if expected >= 0 {
+		rev, err := s.Revision(ctx, keys...)
+		if err != nil {
+			return 0, err
+		}
+		if rev != expected {
+			return 0, ErrConflict
+		}
+	}
+	if err := save(); err != nil {
+		return 0, err
+	}
+	return s.Revision(ctx, keys...)
+}
+
+// 各个表单对应的设置键，给 Revision 和 Guard 用。
+const (
+	KeyPayment    = keyPayment
+	KeySite       = keySite
+	KeyHome       = keyHome
+	KeyTelegram   = keyTelegram
+	KeyRetention  = "retention"
+	KeyAutomation = "automation"
+	KeyBackup     = "backup"
+	KeyUpdate     = "update"
+)
+
+// Fresh 和 Raw 一样，但先丢掉缓存直接读库：给可能被另一个进程（命令行）改过的状态用。
+func (s *Service) Fresh(ctx context.Context, key string, out any) (bool, error) {
+	s.mu.Lock()
+	delete(s.cache, key)
+	s.mu.Unlock()
+	return s.load(ctx, key, out)
 }
 
 func New(db *bun.DB, box *secret.Box) *Service {

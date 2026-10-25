@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -739,5 +740,58 @@ func TestLedgerNeverSucceeded(t *testing.T) {
 	}
 	if ps := stale(); len(ps) != 0 {
 		t.Fatalf("成功查过账后不该再报：%+v", ps)
+	}
+}
+
+// 自动备份失败、或开着却超过 26 小时没成功时告警；关掉后不报。
+func TestBackupAlerts(t *testing.T) {
+	e, m, _, c := setup(t)
+	b := e.App.Backup
+	if !b.Supported() {
+		t.Skip("只有 SQLite 有内置备份")
+	}
+	b.Now = c.Now
+	keys := func() []string {
+		t.Helper()
+		ps, err := m.Checker.Check(e.Ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, p := range ps {
+			if strings.HasPrefix(p.Key, "backup_") {
+				out = append(out, p.Key)
+			}
+		}
+		return out
+	}
+	if ks := keys(); len(ks) != 0 {
+		t.Fatalf("还没备份过时不该告警：%v", ks)
+	}
+	if err := os.WriteFile(b.Dir, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = b.Run(e.Ctx, true)
+	if ks := keys(); len(ks) != 1 || ks[0] != "backup_error" {
+		t.Fatalf("备份失败应告警：%v", ks)
+	}
+	if err := os.Remove(b.Dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Run(e.Ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	if ks := keys(); len(ks) != 0 {
+		t.Fatalf("备份成功后不该告警：%v", ks)
+	}
+	c.Add(monitor.BackupStaleAfter + time.Minute)
+	if ks := keys(); len(ks) != 1 || ks[0] != "backup_stale" {
+		t.Fatalf("超过 26 小时没成功应告警：%v", ks)
+	}
+	if err := e.App.Settings.SaveBackup(e.Ctx, settings.Backup{Enabled: false, Keep: 7}); err != nil {
+		t.Fatal(err)
+	}
+	if ks := keys(); len(ks) != 0 {
+		t.Fatalf("关掉自动备份后不该告警：%v", ks)
 	}
 }

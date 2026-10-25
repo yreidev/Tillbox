@@ -235,7 +235,8 @@ func (r *Registry) Create(ctx context.Context, in Input) (*store.Channel, error)
 }
 
 // Update 修改渠道（类型不能改）。
-func (r *Registry) Update(ctx context.Context, id int64, in Input) (*store.Channel, error) {
+// expected 是页面载入时的修改时间，和库里的对不上时返回 store.ErrConflict；为负数时不检查。
+func (r *Registry) Update(ctx context.Context, id int64, in Input, expected int64) (*store.Channel, error) {
 	if err := r.normalize(&in); err != nil {
 		return nil, err
 	}
@@ -245,6 +246,9 @@ func (r *Registry) Update(ctx context.Context, id int64, in Input) (*store.Chann
 	if err != nil {
 		return nil, err
 	}
+	if expected >= 0 && row.UpdatedAt != expected {
+		return nil, store.ErrConflict
+	}
 	cfg, err := r.merge(row.Type, row.Config, in)
 	if err != nil {
 		return nil, err
@@ -252,7 +256,7 @@ func (r *Registry) Update(ctx context.Context, id int64, in Input) (*store.Chann
 	if err := r.distinct(id, row.Type, cfg); err != nil {
 		return nil, err
 	}
-	row.Name, row.Enabled, row.Remark, row.Config, row.UpdatedAt = in.Name, in.Enabled, in.Remark, cfg, store.Now()
+	row.Name, row.Enabled, row.Remark, row.Config, row.UpdatedAt = in.Name, in.Enabled, in.Remark, cfg, store.Revise(row.UpdatedAt)
 	if _, err := r.db.NewUpdate().Model(row).Column("name", "enabled", "remark", "config", "updated_at").WherePK().Exec(ctx); err != nil {
 		return nil, err
 	}

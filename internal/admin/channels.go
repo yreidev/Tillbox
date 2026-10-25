@@ -135,7 +135,11 @@ func (a *API) updateChannel(w http.ResponseWriter, r *http.Request) error {
 	if err := readJSON(r, &in); err != nil {
 		return err
 	}
-	row, err := a.Channels.Update(r.Context(), id, in)
+	rev, err := revision(r)
+	if err != nil {
+		return err
+	}
+	row, err := a.Channels.Update(r.Context(), id, in, rev)
 	if err != nil {
 		return channelErr(err)
 	}
@@ -185,7 +189,9 @@ func (a *API) channelKeypair(w http.ResponseWriter, r *http.Request) error {
 		return channelErr(err)
 	}
 	_ = store.Audit(r.Context(), a.DB, a.actor(r), "channel.keypair", fmt.Sprint(id), "生成了新的密钥对")
-	ok(w, map[string]any{"public_key": pub})
+	// 生成密钥对也算修改，编辑抽屉拿新的修改时间接着保存，不会误报冲突。
+	_, row, _ = a.Channels.Get(id)
+	ok(w, map[string]any{"public_key": pub, "updated_at": row.UpdatedAt})
 	return nil
 }
 
