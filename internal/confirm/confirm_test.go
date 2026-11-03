@@ -68,7 +68,7 @@ func setup(t *testing.T, version int) *pair {
 	if err := json.Unmarshal(res.Body, &out); err != nil {
 		t.Fatal(err)
 	}
-	dm := down.NewMerchant(&merchant.Input{Name: "下游商户", Enabled: true, Routes: map[string]int64{"alipay": out.Channel.ID}})
+	dm := down.NewMerchant(&merchant.Input{Name: "下游商户", Enabled: true, Routes: apptest.Routes(map[string]int64{"alipay": out.Channel.ID})})
 	if dm.Channel != out.Channel.Key() {
 		t.Fatalf("商户渠道 %s", dm.Channel)
 	}
@@ -82,7 +82,7 @@ func (p *pair) open(types ...string) {
 	for _, typ := range types {
 		routes[typ] = p.ch.ID
 	}
-	if _, err := p.down.App.Merchants.Update(p.down.Ctx, p.dm.ID, merchant.Input{Name: "下游商户", Enabled: true, Routes: routes}, -1); err != nil {
+	if _, err := p.down.App.Merchants.Update(p.down.Ctx, p.dm.ID, merchant.Input{Name: "下游商户", Enabled: true, Routes: apptest.Routes(routes)}, -1); err != nil {
 		p.t.Fatalf("改商户的收款方式：%v", err)
 	}
 }

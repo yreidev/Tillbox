@@ -15,7 +15,6 @@ type Input struct {
 	AppID           string `json:"app_id"`
 	AppPrivateKey   string `json:"app_private_key"` // 可选：导入已有的应用私钥；空表示保留原值
 	AlipayPublicKey string `json:"alipay_public_key"`
-	Gateway         string `json:"gateway"`
 	QRCodeURL       string `json:"qrcode_url"`
 	PayeeName       string `json:"payee_name"`
 }
@@ -26,7 +25,6 @@ type View struct {
 	HasPrivateKey   bool   `json:"has_private_key"`
 	AppPublicKey    string `json:"app_public_key"`
 	AlipayPublicKey string `json:"alipay_public_key"`
-	Gateway         string `json:"gateway"`
 	QRCodeURL       string `json:"qrcode_url"`
 	PayeeName       string `json:"payee_name"`
 }
@@ -36,7 +34,7 @@ func ViewOf(raw string) View {
 	c, _ := ParseConfig(raw)
 	return View{
 		AppID: c.AppID, HasPrivateKey: c.AppPrivateKey != "", AppPublicKey: c.AppPublicKey,
-		AlipayPublicKey: c.AlipayPublicKey, Gateway: c.Gateway, QRCodeURL: c.QRCodeURL, PayeeName: c.PayeeName,
+		AlipayPublicKey: c.AlipayPublicKey, QRCodeURL: c.QRCodeURL, PayeeName: c.PayeeName,
 	}
 }
 
@@ -49,7 +47,7 @@ func validQRCode(s string) bool {
 func Merge(box *secret.Box, cur string, in json.RawMessage, enabled bool) (string, error) {
 	c, err := ParseConfig(cur)
 	if err != nil {
-		c = Config{Gateway: GatewayProd}
+		c = Config{}
 	}
 	var v Input
 	if len(in) > 0 {
@@ -61,14 +59,6 @@ func Merge(box *secret.Box, cur string, in json.RawMessage, enabled bool) (strin
 	c.AlipayPublicKey = strings.Join(strings.Fields(v.AlipayPublicKey), "")
 	c.QRCodeURL = strings.TrimSpace(v.QRCodeURL)
 	c.PayeeName = strings.TrimSpace(v.PayeeName)
-	gw := strings.TrimRight(strings.TrimSpace(v.Gateway), "/")
-	if gw == "" {
-		gw = GatewayProd
-	}
-	if u, err := url.Parse(gw); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-		return "", channel.Invalid("支付宝网关地址不对")
-	}
-	c.Gateway = gw
 	if c.AppID != "" && strings.Trim(c.AppID, "0123456789") != "" {
 		return "", channel.Invalid("应用 ID（AppID）应该是一串数字")
 	}
@@ -113,7 +103,7 @@ func Merge(box *secret.Box, cur string, in json.RawMessage, enabled bool) (strin
 func Keypair(box *secret.Box, cur string) (cfg, pub string, err error) {
 	c, err := ParseConfig(cur)
 	if err != nil {
-		c = Config{Gateway: GatewayProd}
+		c = Config{}
 	}
 	priv, pub, err := epay.GenerateKeyPair()
 	if err != nil {

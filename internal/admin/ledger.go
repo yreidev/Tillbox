@@ -111,8 +111,44 @@ func (a *API) linkTransaction(w http.ResponseWriter, r *http.Request) error {
 
 type anomalyView struct {
 	store.Anomaly
-	TradeNo     string             `json:"trade_no"`
+	Order       *anomalyOrder      `json:"order,omitempty"`
 	Transaction *store.Transaction `json:"transaction,omitempty"`
+}
+
+// anomalyOrder 是异常关联的订单，在列表里直接显示，不用点开详情。
+type anomalyOrder struct {
+	ID         int64  `bun:"id" json:"-"`
+	TradeNo    string `bun:"trade_no" json:"trade_no"`
+	OutTradeNo string `bun:"out_trade_no" json:"out_trade_no"`
+	Name       string `bun:"name" json:"name"`
+	Merchant   string `bun:"merchant" json:"merchant"`
+	Amount     int64  `bun:"amount" json:"amount"`
+	PayAmount  int64  `bun:"pay_amount" json:"pay_amount"`
+	Channel    string `bun:"channel" json:"channel"`
+}
+
+// anomalyOrders 读出异常关联的订单和所属商户的名称。
+func (a *API) anomalyOrders(r *http.Request, as []store.Anomaly) (map[int64]*anomalyOrder, error) {
+	var ids []int64
+	for _, x := range as {
+		if x.OrderID != 0 {
+			ids = append(ids, x.OrderID)
+		}
+	}
+	out := map[int64]*anomalyOrder{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	var rows []anomalyOrder
+	err := a.DB.NewSelect().Model((*store.Order)(nil)).
+		ColumnExpr("o.id, o.trade_no, o.out_trade_no, o.name, o.amount, o.pay_amount, o.channel").
+		ColumnExpr("COALESCE(m.name, '') AS merchant").
+		Join("LEFT JOIN merchants AS m ON m.id = o.merchant_id").
+		Where("o.id IN (?)", bun.List(ids)).Scan(r.Context(), &rows)
+	for i := range rows {
+		out[rows[i].ID] = &rows[i]
+	}
+	return out, err
 }
 
 func (a *API) listAnomalies(w http.ResponseWriter, r *http.Request) error {
@@ -130,11 +166,7 @@ func (a *API) listAnomalies(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	tradeNos, err := a.tradeNosOf(r, func(add func(int64)) {
-		for _, x := range as {
-			add(x.OrderID)
-		}
-	})
+	orders, err := a.anomalyOrders(r, as)
 	if err != nil {
 		return err
 	}
@@ -156,7 +188,7 @@ func (a *API) listAnomalies(w http.ResponseWriter, r *http.Request) error {
 	}
 	items := make([]anomalyView, len(as))
 	for i, x := range as {
-		items[i] = anomalyView{Anomaly: x, TradeNo: tradeNos[x.OrderID], Transaction: txns[x.TransactionID]}
+		items[i] = anomalyView{Anomaly: x, Order: orders[x.OrderID], Transaction: txns[x.TransactionID]}
 	}
 	open, err := a.DB.NewSelect().Model((*store.Anomaly)(nil)).Where("status = ?", store.AnomalyOpen).Count(r.Context())
 	if err != nil {

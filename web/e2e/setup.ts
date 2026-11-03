@@ -83,9 +83,25 @@ async function seed(api: APIRequestContext, origin: string): Promise<Seed> {
       },
     }),
   )
+  const one = (id: number) => [{ channel_id: id, weight: 1 }]
   await ok(
     api.put(`/web-api/admin/merchants/${shop.pid}`, {
-      data: { name: '演示商城', enabled: true, routes: { alipay: demo, wxpay: third.channel.id } },
+      data: { name: '演示商城', enabled: true, routes: { alipay: one(demo), wxpay: one(third.channel.id) } },
+    }),
+  )
+  // 支付宝选两个渠道按权重分的商户，不下单，只给商户页和支付测试页看
+  await ok(
+    api.post('/web-api/admin/merchants', {
+      data: {
+        name: '演示多渠道',
+        enabled: true,
+        routes: {
+          alipay: [
+            { channel_id: demo, weight: 3 },
+            { channel_id: third.channel.id, weight: 1 },
+          ],
+        },
+      },
     }),
   )
   const choosing = await submitOrder(api, shop, '9.90')

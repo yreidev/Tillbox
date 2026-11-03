@@ -92,8 +92,24 @@ export interface Anomaly {
   resolved_at: number
   resolved_by: string
   note: string
-  trade_no: string
+}
+
+/** AnomalyView 是流水异常列表里的一条，带出关联的订单和流水 */
+export interface AnomalyView extends Anomaly {
+  order?: AnomalyOrder
   transaction?: Transaction
+}
+
+/** AnomalyOrder 是异常关联的订单，列表里直接显示 */
+export interface AnomalyOrder {
+  trade_no: string
+  out_trade_no: string
+  name: string
+  merchant: string
+  amount: number
+  pay_amount: number
+  /** 渠道实例键 ch<编号>，付款人还没选支付方式时为空 */
+  channel: string
 }
 
 export interface Notification {
@@ -127,6 +143,19 @@ export interface NotifyAttempt {
   created_at: number
 }
 
+/** RouteTarget 是一种支付方式选的一个渠道；选了几个时新订单按权重在能收款的渠道里随机分 */
+export interface RouteTarget {
+  channel_id: number
+  weight: number
+}
+
+/** Routes 是商户的收款方式：支付方式 → 选的渠道 */
+export type Routes = Record<string, RouteTarget[]>
+
+/** 权重范围，和后端 store.MinWeight、MaxWeight 一致 */
+export const minWeight = 1
+export const maxWeight = 100
+
 export interface Merchant {
   id: number
   name: string
@@ -134,8 +163,8 @@ export interface Merchant {
   key_type: number
   domains: string
   enabled: boolean
-  /** 收款方式：支付方式 → 渠道编号，没开的方式不出现 */
-  routes: Record<string, number>
+  /** 收款方式：支付方式 → 选的渠道（按编号升序），没开的方式不出现 */
+  routes: Routes
   remark: string
   created_at: number
   updated_at: number
@@ -147,8 +176,8 @@ export interface MerchantInput {
   key_type: number
   domains: string
   enabled: boolean
-  /** 不传时新建商户用默认的收款方式，修改时保留原样；渠道编号是 0 的方式算没开 */
-  routes?: Record<string, number>
+  /** 不传时新建商户用默认的收款方式，修改时保留原样；一个渠道都没选的方式算没开 */
+  routes?: Routes
   remark: string
 }
 
@@ -241,7 +270,6 @@ export interface AlipayQRConfig {
   has_private_key: boolean
   app_public_key: string
   alipay_public_key: string
-  gateway: string
   qrcode_url: string
   payee_name: string
 }

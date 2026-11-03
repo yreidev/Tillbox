@@ -7,7 +7,7 @@ import { LedgerRow } from '../../components/ledger-status'
 import { OrderDetail } from '../../components/order-detail'
 import { api, channelsQuery, overviewQuery, query } from '../../lib/api'
 import { time, yuan } from '../../lib/format'
-import type { Anomaly, LedgerStatus, Page, Transaction } from '../../lib/types'
+import type { AnomalyView, LedgerStatus, Page, Transaction } from '../../lib/types'
 import { anomalyText, invalidTxn, txnStateText } from '../../lib/types'
 import {
   DataTable,
@@ -161,12 +161,14 @@ function Anomalies({ search, resolved }: { search: Search; resolved: boolean }) 
   const navigate = useNavigate({ from: Route.fullPath })
   const qc = useQueryClient()
   const [linking, setLinking] = useState<Transaction | null>(null)
-  const [resolving, setResolving] = useState<Anomaly | null>(null)
+  const [resolving, setResolving] = useState<AnomalyView | null>(null)
   const [detail, setDetail] = useState<number | null>(null)
+  const channels = useQuery(channelsQuery).data?.items ?? []
+  const channelName = (key: string) => channels.find((c) => c.key === key)?.name ?? key
   const q = useQuery({
     queryKey: ['anomalies', resolved, search.kind, search.page],
     queryFn: () =>
-      api.get<Page<Anomaly> & { open: number }>(
+      api.get<Page<AnomalyView> & { open: number }>(
         `/web-api/admin/anomalies${query({ status: resolved ? 'resolved' : 'open', kind: search.kind, page: search.page, page_size: pageSize })}`,
       ),
     placeholderData: keepPreviousData,
@@ -211,6 +213,8 @@ function Anomalies({ search, resolved }: { search: Search; resolved: boolean }) 
         ) : (
           items.map((a, i) => {
             const t = a.transaction
+            const o = a.order
+            const channel = o?.channel || t?.channel
             const canLink = !resolved && !!t && t.direction === 'in' && t.order_id === 0 && !invalidTxn(t)
             return (
               <Fragment key={a.id}>
@@ -220,12 +224,23 @@ function Anomalies({ search, resolved }: { search: Search; resolved: boolean }) 
                     <div className="flex flex-wrap items-center gap-2">
                       <Pill tone={resolved ? 'default' : 'warning'}>{anomalyText[a.kind]}</Pill>
                       <span className="tb-num text-xs text-muted">{time(a.created_at)}</span>
-                      {a.trade_no && (
+                      {o && (
                         <span className="text-xs text-muted">
-                          订单 <OrderLink tradeNo={a.trade_no} onClick={() => setDetail(a.order_id)} />
+                          订单 <OrderLink tradeNo={o.trade_no} onClick={() => setDetail(a.order_id)} />
                         </span>
                       )}
+                      {channel && channels.length > 1 && (
+                        <span className="text-xs text-muted">{channelName(channel)}</span>
+                      )}
                     </div>
+                    {o && (
+                      <Typography.Paragraph size="xs" color="muted">
+                        <span className="font-medium text-foreground">{o.merchant || '已删除的商户'}</span> · {o.name} ·
+                        商户订单号 <Mono>{o.out_trade_no}</Mono> · 应付{' '}
+                        <span className="tb-num font-medium text-foreground">¥{yuan(o.pay_amount)}</span>
+                        {o.pay_amount !== o.amount && <span className="tb-num">（原价 ¥{yuan(o.amount)}）</span>}
+                      </Typography.Paragraph>
+                    )}
                     <Typography.Paragraph size="sm">{a.detail}</Typography.Paragraph>
                     {t && (
                       <Typography.Paragraph size="xs" color="muted">

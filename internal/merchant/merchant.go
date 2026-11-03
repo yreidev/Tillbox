@@ -2,6 +2,7 @@
 package merchant
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -49,12 +50,12 @@ func New(db *bun.DB, box *secret.Box) *Service {
 	return &Service{db: db, box: box}
 }
 
-// loadRoutes 给商户填上各支付方式走的渠道。
+// loadRoutes 给商户填上各支付方式选的渠道。
 func (s *Service) loadRoutes(ctx context.Context, ms []store.Merchant) error {
 	if len(ms) == 0 {
 		return nil
 	}
-	q := s.db.NewSelect().Model((*store.MerchantRoute)(nil))
+	q := s.db.NewSelect().Model((*store.MerchantRoute)(nil)).Order("channel_id")
 	if len(ms) == 1 {
 		q = q.Where("merchant_id = ?", ms[0].ID)
 	}
@@ -64,26 +65,26 @@ func (s *Service) loadRoutes(ctx context.Context, ms []store.Merchant) error {
 	}
 	byID := make(map[int64]*store.Merchant, len(ms))
 	for i := range ms {
-		ms[i].Routes = map[string]int64{}
+		ms[i].Routes = store.Routes{}
 		byID[ms[i].ID] = &ms[i]
 	}
 	for _, r := range rs {
 		if m := byID[r.MerchantID]; m != nil {
-			m.Routes[r.PayType] = r.ChannelID
+			m.Routes[r.PayType] = append(m.Routes[r.PayType], store.Route{ChannelID: r.ChannelID, Weight: r.Weight})
 		}
 	}
 	return nil
 }
 
 // saveRoutes 在事务里换掉商户的收款方式。
-func saveRoutes(ctx context.Context, tx bun.Tx, id int64, routes map[string]int64) error {
+func saveRoutes(ctx context.Context, tx bun.Tx, id int64, routes store.Routes) error {
 	if _, err := tx.NewDelete().Model((*store.MerchantRoute)(nil)).Where("merchant_id = ?", id).Exec(ctx); err != nil {
 		return err
 	}
-	rows := make([]store.MerchantRoute, 0, len(routes))
+	var rows []store.MerchantRoute
 	for _, t := range channel.TypeOrder {
-		if ch := routes[t]; ch != 0 {
-			rows = append(rows, store.MerchantRoute{MerchantID: id, PayType: t, ChannelID: ch})
+		for _, r := range routes[t] {
+			rows = append(rows, store.MerchantRoute{MerchantID: id, PayType: t, ChannelID: r.ChannelID, Weight: r.Weight})
 		}
 	}
 	if len(rows) == 0 {
@@ -94,44 +95,61 @@ func saveRoutes(ctx context.Context, tx bun.Tx, id int64, routes map[string]int6
 }
 
 // DefaultRoutes 是新建商户默认的收款方式：每种方式走第一个启用、并且开放了这种方式的渠道。
-func (s *Service) DefaultRoutes() map[string]int64 {
-	out := map[string]int64{}
+func (s *Service) DefaultRoutes() store.Routes {
+	out := store.Routes{}
 	for _, c := range s.Channels.List() {
 		if !c.Enabled {
 			continue
 		}
 		types, _ := s.Channels.PayTypes(c.ID)
 		for _, t := range types {
-			if out[t] == 0 && channel.TypeNames[t] != "" {
-				out[t] = c.ID
+			if out[t] == nil && channel.TypeNames[t] != "" {
+				out[t] = []store.Route{{ChannelID: c.ID, Weight: 1}}
 			}
 		}
 	}
 	return out
 }
 
-// checkRoutes 检查收款方式：认识的支付方式、渠道存在并且开放了这种方式。渠道编号是 0 的方式算没开，去掉。
-func (s *Service) checkRoutes(routes map[string]int64) (map[string]int64, error) {
+// checkRoutes 检查收款方式：认识的支付方式，渠道存在、开放了这种方式、同一种方式里不重复，权重在范围内。
+// 渠道编号是 0 的去掉，一个渠道都没选的方式算没开；没填权重的记 1。返回的每种方式按渠道编号升序。
+func (s *Service) checkRoutes(routes store.Routes) (store.Routes, error) {
 	names := map[int64]string{}
 	for _, c := range s.Channels.List() {
 		names[c.ID] = c.Name
 	}
-	out := map[string]int64{}
-	for t, id := range routes {
-		if id == 0 {
-			continue
+	out := store.Routes{}
+	for t, rs := range routes {
+		var picked []store.Route
+		for _, r := range rs {
+			if r.ChannelID == 0 {
+				continue
+			}
+			if channel.TypeNames[t] == "" {
+				return nil, fmt.Errorf("不认识的支付方式 %q", t)
+			}
+			types, ok := s.Channels.PayTypes(r.ChannelID)
+			if !ok {
+				return nil, fmt.Errorf("渠道不存在：%s要换一个渠道", channel.TypeLabel(t))
+			}
+			if !slices.Contains(types, t) {
+				return nil, fmt.Errorf("渠道「%s」没有开放%s", names[r.ChannelID], channel.TypeLabel(t))
+			}
+			if slices.ContainsFunc(picked, func(x store.Route) bool { return x.ChannelID == r.ChannelID }) {
+				return nil, fmt.Errorf("渠道「%s」在%s里选了两次", names[r.ChannelID], channel.TypeLabel(t))
+			}
+			if r.Weight == 0 {
+				r.Weight = 1
+			}
+			if r.Weight < store.MinWeight || r.Weight > store.MaxWeight {
+				return nil, fmt.Errorf("权重要在 %d 到 %d 之间（%s）", store.MinWeight, store.MaxWeight, channel.TypeLabel(t))
+			}
+			picked = append(picked, r)
 		}
-		if channel.TypeNames[t] == "" {
-			return nil, fmt.Errorf("不认识的支付方式 %q", t)
+		if len(picked) > 0 {
+			slices.SortFunc(picked, func(a, b store.Route) int { return cmp.Compare(a.ChannelID, b.ChannelID) })
+			out[t] = picked
 		}
-		types, ok := s.Channels.PayTypes(id)
-		if !ok {
-			return nil, fmt.Errorf("渠道不存在：%s要换一个渠道", channel.TypeLabel(t))
-		}
-		if !slices.Contains(types, t) {
-			return nil, fmt.Errorf("渠道「%s」没有开放%s", names[id], channel.TypeLabel(t))
-		}
-		out[t] = id
 	}
 	return out, nil
 }
@@ -185,8 +203,9 @@ type Input struct {
 	Domains      string `json:"domains"`
 	Enabled      bool   `json:"enabled"`
 	Remark       string `json:"remark"`
-	// Routes 是各支付方式走的渠道。不传时新建商户用 DefaultRoutes，修改时保留原样；渠道编号是 0 的方式算没开。
-	Routes map[string]int64 `json:"routes"`
+	// Routes 是各支付方式选的渠道和权重。不传时新建商户用 DefaultRoutes，修改时保留原样；
+	// 渠道编号是 0 的不算，一个渠道都没选的方式算没开，没填权重的记 1。
+	Routes store.Routes `json:"routes"`
 }
 
 func (in *Input) normalize() error {
@@ -320,7 +339,7 @@ func (s *Service) Update(ctx context.Context, id int64, in Input, expected int64
 	if err := in.normalize(); err != nil {
 		return nil, err
 	}
-	var routes map[string]int64
+	var routes store.Routes
 	if in.Routes != nil {
 		var err error
 		if routes, err = s.checkRoutes(in.Routes); err != nil {

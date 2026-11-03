@@ -14,7 +14,7 @@ import {
 } from '@gravity-ui/icons'
 import { LedgerRow } from '../../components/ledger-status'
 import { casesCountQuery, channelsQuery, overviewQuery } from '../../lib/api'
-import { yuan } from '../../lib/format'
+import { time, yuan } from '../../lib/format'
 import type { Day, Overview } from '../../lib/types'
 import { DataTable, Notice, PageHeader, PageSkeleton, Panel, Pill, RouterLink, type Tone } from '../../lib/ui'
 
@@ -43,8 +43,9 @@ function OverviewPage() {
   const o = q.data
   const manual = cases.data?.counts?.manual ?? 0
 
-  if (q.isError) return <Notice status="danger">{q.error.message}</Notice>
-  if (!o) return <PageSkeleton />
+  if (!o) return q.isError ? <Notice status="danger">{q.error.message}</Notice> : <PageSkeleton />
+  // 刷新失败时保留上次读到的趋势和每日明细，当前的数字（今天、近几天合计、待付款、通知重试）显示未知，恢复后自动更新。
+  const stale = q.isError
 
   const total = { count: o.days.reduce((s, d) => s + d.count, 0), amount: o.days.reduce((s, d) => s + d.amount, 0) }
   const todo: Todo[] = []
@@ -93,19 +94,25 @@ function OverviewPage() {
   return (
     <div className="flex flex-col gap-4">
       <PageHeader description="今天收了多少，有什么要处理的。数据每 15 秒自动刷新。" />
+      {stale && (
+        <Notice status="danger" title="刷新失败">
+          {q.error.message}。今天的数字先显示为未知，趋势、每日明细和待处理是{' '}
+          <span className="tb-num">{time(q.dataUpdatedAt)}</span> 读到的，恢复后自动更新。
+        </Notice>
+      )}
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Kpi label="今日收款" icon={<Wallet />} status="success" cents={o.today.amount}>
-          {o.today.count} 笔已支付订单
+        <Kpi label="今日收款" icon={<Wallet />} status="success" cents={o.today.amount} unknown={stale}>
+          {stale ? '等刷新恢复' : `${o.today.count} 笔已支付订单`}
         </Kpi>
-        <Kpi label={`近 ${days} 天收款`} icon={<Receipt />} cents={total.amount}>
-          {total.count} 笔 · 日均 {yuan(Math.round(total.amount / o.days.length))} 元
+        <Kpi label={`近 ${days} 天收款`} icon={<Receipt />} cents={total.amount} unknown={stale}>
+          {stale ? '等刷新恢复' : `${total.count} 笔 · 日均 ${yuan(Math.round(total.amount / o.days.length))} 元`}
         </Kpi>
-        <Kpi label="等待付款" icon={<Clock />} count={o.pending_orders}>
+        <Kpi label="等待付款" icon={<Clock />} count={o.pending_orders} unknown={stale}>
           <RouterLink to="/admin/orders" search={{ state: 'pending' }}>
             查看待支付订单
           </RouterLink>
         </Kpi>
-        <Kpi label="通知重试中" icon={<Bell />} count={o.retrying_notifications}>
+        <Kpi label="通知重试中" icon={<Bell />} count={o.retrying_notifications} unknown={stale}>
           商户暂时没确认，会按计划自动重发
         </Kpi>
       </div>
@@ -195,6 +202,7 @@ function Kpi({
   status,
   cents,
   count,
+  unknown,
   children,
 }: {
   label: ReactNode
@@ -202,6 +210,8 @@ function Kpi({
   status?: 'success' | 'warning' | 'danger'
   cents?: number
   count?: number
+  /** 读不到最新数据时为真：数值显示成“—”，不拿旧数当现在的 */
+  unknown?: boolean
   children: ReactNode
 }) {
   const money = cents !== undefined
@@ -212,19 +222,25 @@ function Kpi({
         <KPI.Title>{label}</KPI.Title>
       </KPI.Header>
       <KPI.Content>
-        <KPI.Value
-          className="tb-num"
-          value={money ? cents / 100 : (count ?? 0)}
-          minimumFractionDigits={money ? 2 : 0}
-          maximumFractionDigits={money ? 2 : 0}
-        >
-          {(formatted) => (
-            <>
-              {formatted}
-              <span className="ms-1 text-sm font-normal text-muted">{money ? '元' : '笔'}</span>
-            </>
-          )}
-        </KPI.Value>
+        {unknown ? (
+          <span className="text-2xl font-semibold text-muted" aria-label="未知">
+            —
+          </span>
+        ) : (
+          <KPI.Value
+            className="tb-num"
+            value={money ? cents / 100 : (count ?? 0)}
+            minimumFractionDigits={money ? 2 : 0}
+            maximumFractionDigits={money ? 2 : 0}
+          >
+            {(formatted) => (
+              <>
+                {formatted}
+                <span className="ms-1 text-sm font-normal text-muted">{money ? '元' : '笔'}</span>
+              </>
+            )}
+          </KPI.Value>
+        )}
       </KPI.Content>
       <KPI.Footer className="text-xs text-muted">{children}</KPI.Footer>
     </KPI>

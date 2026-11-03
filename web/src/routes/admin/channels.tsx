@@ -7,15 +7,12 @@ import {
   Card,
   Checkbox,
   CheckboxGroup,
-  ComboBox,
   Description,
   Drawer,
   Dropdown,
   Form,
-  Input,
   ItemCard,
   Label,
-  ListBox,
   PressableFeedback,
   ProgressBar,
   Skeleton,
@@ -93,7 +90,6 @@ function inputOf(c: ChannelView, enabled: boolean) {
     const a = c.config as AlipayQRConfig
     config = {
       app_id: a.app_id,
-      gateway: a.gateway,
       alipay_public_key: a.alipay_public_key,
       qrcode_url: a.qrcode_url,
       payee_name: a.payee_name,
@@ -810,15 +806,9 @@ function KeyField({
   )
 }
 
-const gateways: Record<string, string> = {
-  'https://openapi.alipay.com': '正式环境',
-  'https://openapi-sandbox.dl.alipaydev.com': '沙箱环境',
-}
-
 interface AlipayValues extends Base {
   app_id: string
   alipay_public_key: string
-  gateway: string
   qrcode_url: string
   payee_name: string
 }
@@ -837,7 +827,6 @@ function AlipayForm({ c, onCreated }: { c?: ChannelView; onCreated: (id: number)
       enabled: c?.enabled ?? false,
       app_id: a.app_id ?? '',
       alipay_public_key: a.alipay_public_key ?? '',
-      gateway: a.gateway || 'https://openapi.alipay.com',
       qrcode_url: a.qrcode_url ?? '',
       payee_name: a.payee_name ?? '',
     }
@@ -849,7 +838,6 @@ function AlipayForm({ c, onCreated }: { c?: ChannelView; onCreated: (id: number)
       {
         app_id: v.app_id,
         alipay_public_key: v.alipay_public_key,
-        gateway: v.gateway,
         qrcode_url: v.qrcode_url,
         payee_name: v.payee_name,
         app_private_key: privateKey,
@@ -880,11 +868,17 @@ function AlipayForm({ c, onCreated }: { c?: ChannelView; onCreated: (id: number)
       if (fileRef.current) fileRef.current.value = ''
     }
   }
-  const gatewayOptions = [...Object.keys(gateways), ...(a.gateway && !(a.gateway in gateways) ? [a.gateway] : [])]
+  // 有订单或流水的渠道改应用 ID 或经营码，多半是换了支付宝账户：保存前提醒换账户该新建渠道
+  const [askAccount, setAskAccount] = useState(false)
+  const accountChanged =
+    !!c &&
+    c.orders + c.transactions > 0 &&
+    ((!!a.app_id && a.app_id !== v.app_id.trim()) || (!!a.qrcode_url && a.qrcode_url !== v.qrcode_url.trim()))
   const steps: Step[] = [
     {
       title: '在支付宝开放平台创建应用',
-      description: '网页/移动应用均可。开通「账务明细查询」权限并让应用上线，把应用 ID 填到下面。',
+      description:
+        '网页/移动应用均可。开通「账务明细查询」权限，等应用状态变成「已上线」，把应用 ID 填到下面。沙箱和开发中的应用查不了账。',
       done: !!v.app_id.trim(),
     },
     {
@@ -924,7 +918,8 @@ function AlipayForm({ c, onCreated }: { c?: ChannelView; onCreated: (id: number)
           className="flex flex-col gap-7"
           onSubmit={(e) => {
             e.preventDefault()
-            void submit()
+            if (accountChanged) setAskAccount(true)
+            else void submit()
           }}
         >
           <Checklist steps={steps} />
@@ -936,34 +931,8 @@ function AlipayForm({ c, onCreated }: { c?: ChannelView; onCreated: (id: number)
               mono
               value={v.app_id}
               onChange={(x) => set('app_id', x)}
+              description="支付宝开放平台里状态是「已上线」的正式应用，查账走支付宝正式网关。"
             />
-            <ComboBox
-              variant="secondary"
-              allowsCustomValue
-              inputValue={v.gateway}
-              onInputChange={(x) => set('gateway', x)}
-              onSelectionChange={(k) => k !== null && set('gateway', String(k))}
-            >
-              <Label>支付宝网关</Label>
-              <ComboBox.InputGroup>
-                <Input className="tb-mono" />
-                <ComboBox.Trigger />
-              </ComboBox.InputGroup>
-              <Description>可以选，也可以直接填其他网关地址</Description>
-              <ComboBox.Popover>
-                <ListBox>
-                  {gatewayOptions.map((g) => (
-                    <ListBox.Item key={g} id={g} textValue={g}>
-                      <div className="flex flex-col">
-                        <span className="tb-mono">{g}</span>
-                        {gateways[g] && <span className="text-xs text-muted">{gateways[g]}</span>}
-                      </div>
-                      <ListBox.ItemIndicator />
-                    </ListBox.Item>
-                  ))}
-                </ListBox>
-              </ComboBox.Popover>
-            </ComboBox>
             <KeyField
               c={c}
               label="应用密钥"
@@ -1030,6 +999,23 @@ function AlipayForm({ c, onCreated }: { c?: ChannelView; onCreated: (id: number)
         test={test}
         conflict={rev.conflict && { onReload: reload, onOverwrite: () => submit('', true) }}
       />
+      <ConfirmDialog
+        open={askAccount}
+        onClose={() => setAskAccount(false)}
+        title="换的是另一个支付宝账户吗？"
+        status="warning"
+        okText="同一个账户，保存"
+        onConfirm={() => submit()}
+      >
+        <p>
+          这个渠道已经有 <span className="tb-num">{c?.orders ?? 0}</span> 笔订单、
+          <span className="tb-num">{c?.transactions ?? 0}</span> 条流水。改了应用 ID
+          或经营码以后，收银台显示新的经营码，查账也只查新应用， 旧账户里的迟付查不到，历史流水也分不清是哪个账户的。
+        </p>
+        <p>
+          同一个账户换了应用或收款码，照常保存。换成另一个账户的话请取消，新建一个经营码渠道，到商户页把支付宝改走新渠道；这个渠道等待支付的订单都结束后再停用。
+        </p>
+      </ConfirmDialog>
     </>
   )
 }

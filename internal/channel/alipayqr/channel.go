@@ -19,11 +19,9 @@ import (
 	"tillbox/internal/store"
 )
 
-// 支付宝网关
-const (
-	GatewayProd    = "https://openapi.alipay.com"
-	GatewaySandbox = "https://openapi-sandbox.dl.alipaydev.com"
-)
+// Gateway 是支付宝开放平台的正式网关。只支持支付宝里状态是“已上线”、开通了账务明细查询的应用；
+// 沙箱和“开发中”的应用查不了真实账户的流水，不支持。
+const Gateway = "https://openapi.alipay.com"
 
 // Config 是经营码渠道的配置，存在渠道表的 config 列。
 type Config struct {
@@ -31,21 +29,17 @@ type Config struct {
 	AppPrivateKey   string `json:"app_private_key"` // 主密钥加密
 	AppPublicKey    string `json:"app_public_key"`  // 交给用户上传到支付宝
 	AlipayPublicKey string `json:"alipay_public_key"`
-	Gateway         string `json:"gateway"`
 	QRCodeURL       string `json:"qrcode_url"` // 经营码内容，https://qr.alipay.com/...
 	PayeeName       string `json:"payee_name"` // 收银台显示的收款方名称，可空
 }
 
-// ParseConfig 解析渠道表里的配置，没填网关时用正式环境。
+// ParseConfig 解析渠道表里的配置。
 func ParseConfig(raw string) (Config, error) {
 	c := Config{}
 	if strings.TrimSpace(raw) != "" {
 		if err := json.Unmarshal([]byte(raw), &c); err != nil {
 			return c, fmt.Errorf("经营码渠道配置格式不对：%w", err)
 		}
-	}
-	if c.Gateway == "" {
-		c.Gateway = GatewayProd
 	}
 	return c, nil
 }
@@ -141,7 +135,7 @@ func (c *Channel) Client(context.Context) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("支付宝公钥无效：%w", err)
 	}
-	return &Client{Gateway: a.Gateway, AppID: a.AppID, PrivateKey: priv, AlipayPublicKey: pub, HTTP: c.http}, nil
+	return &Client{Gateway: Gateway, AppID: a.AppID, PrivateKey: priv, AlipayPublicKey: pub, HTTP: c.http}, nil
 }
 
 // Fetch 拉 [start, end) 的全部流水。一页装不下时把窗口对半切开再查；切到 1 秒还装不下才翻页。

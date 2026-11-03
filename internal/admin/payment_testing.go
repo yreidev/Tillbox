@@ -29,6 +29,8 @@ func (a *API) createPaymentTest(w http.ResponseWriter, r *http.Request) error {
 		Money      string `json:"money"`
 		Version    int    `json:"version"`
 		PayType    string `json:"pay_type"` // 空：商户只开了一种方式时用它，开了几种时在收银台选
+		// ChannelID 指定这种方式选的哪个渠道收款（用来逐个试渠道），0 时和正常下单一样按权重挑。要带 PayType。
+		ChannelID int64 `json:"channel_id"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		return err
@@ -52,16 +54,35 @@ func (a *API) createPaymentTest(w http.ResponseWriter, r *http.Request) error {
 	if typ == "" && len(methods) == 1 {
 		typ = methods[0].Type
 	}
-	var pick *payroute.Method
+	if in.ChannelID != 0 && typ == "" {
+		return badRequest("指定渠道时要选支付方式")
+	}
+	var pick *payroute.Route
 	if typ != "" {
 		mt, found := payroute.Find(methods, typ)
 		if !found {
 			return badRequest("这个商户没有开放" + channel.TypeLabel(typ))
 		}
-		if !mt.Ready() {
-			return badRequest(channel.TypeLabel(typ) + "现在收不了款：" + mt.Problem)
+		if in.ChannelID != 0 {
+			i := slices.IndexFunc(mt.Routes, func(rt payroute.Route) bool { return rt.Row.ID == in.ChannelID })
+			if i < 0 {
+				return badRequest("这个商户的" + channel.TypeLabel(typ) + "没有选这个渠道")
+			}
+			if !mt.Routes[i].Ready() {
+				return badRequest("这个渠道现在收不了款：" + mt.Routes[i].Problem)
+			}
+			pick = &mt.Routes[i]
+		} else {
+			rt, err := mt.Pick(amount, time.Now())
+			var ae *channel.AmountError
+			switch {
+			case errors.Is(err, payroute.ErrUnavailable):
+				return badRequest(channel.TypeLabel(typ) + "现在收不了款：" + mt.Problem())
+			case errors.As(err, &ae):
+				return badRequest(ae.Message())
+			}
+			pick = &rt
 		}
-		pick = &mt
 	} else if !slices.ContainsFunc(methods, payroute.Method.Ready) {
 		return badRequest("这个商户开放的支付方式现在都收不了款")
 	}
@@ -83,7 +104,7 @@ func (a *API) createPaymentTest(w http.ResponseWriter, r *http.Request) error {
 	}
 	_ = store.Audit(r.Context(), a.DB, a.actor(r), "payment_test.create", o.TradeNo, "")
 	if pick != nil {
-		if _, err := payroute.Choose(r.Context(), a.Orders, a.Confirm, o, *pick, a.BaseURL(r)); err != nil {
+		if _, _, err := payroute.Choose(r.Context(), a.Channels, a.Orders, a.Confirm, o, *pick, a.BaseURL(r)); err != nil {
 			return badRequest("向第三方平台预下单失败：" + err.Error())
 		}
 		if !pick.Confirming() {

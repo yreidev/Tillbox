@@ -3,6 +3,7 @@ package admin_test
 import (
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -62,7 +63,6 @@ func TestChannelsAPI(t *testing.T) {
 		enabled bool
 		want    string
 	}{
-		{func(x *alipayqr.Input) { x.Gateway = "ftp://x" }, false, "网关地址"},
 		{func(x *alipayqr.Input) { x.AppID = "abc" }, false, "一串数字"},
 		{func(x *alipayqr.Input) { x.AlipayPublicKey = "xyz" }, false, "支付宝公钥格式不对"},
 		{func(x *alipayqr.Input) { x.QRCodeURL = "https://evil.example.com/fkx" }, false, "qr.alipay.com"},
@@ -84,7 +84,7 @@ func TestChannelsAPI(t *testing.T) {
 	res := decode[map[string]store.Channel](t, create(spaced, false))
 	ali := res["channel"]
 	v := channels(t, a)[ali.ID]
-	if v.Config["alipay_public_key"] != aliPub || v.Config["gateway"] != alipayqr.GatewayProd || v.Config["app_id"] != ok.AppID || v.Config["has_private_key"] != false || v.Enabled {
+	if v.Config["alipay_public_key"] != aliPub || v.Config["gateway"] != nil || v.Config["app_id"] != ok.AppID || v.Config["has_private_key"] != false || v.Enabled {
 		t.Errorf("经营码配置：%+v", v)
 	}
 	if !strings.Contains(v.Problem, "停用") || v.Ledger == nil || len(v.PayTypes) != 1 || v.PayTypes[0] != "alipay" {
@@ -152,15 +152,15 @@ func TestChannelsAPI(t *testing.T) {
 	if m.Channel != e.ChannelKey() {
 		t.Errorf("新商户默认渠道 %s", m.Channel)
 	}
-	alipay := func(id int64) map[string]int64 { return map[string]int64{"alipay": id} }
+	alipay := func(id int64) store.Routes { return apptest.Routes(map[string]int64{"alipay": id}) }
 	mpath := fmt.Sprintf("/web-api/admin/merchants/%d", m.ID)
 	expect(t, a.Call("PUT", mpath, merchant.Input{Name: "x", Enabled: true, Routes: alipay(999)}), http.StatusBadRequest, "渠道不存在")
-	expect(t, a.Call("PUT", mpath, merchant.Input{Name: "x", Enabled: true, Routes: map[string]int64{"wxpay": ali.ID}}), http.StatusBadRequest, "没有开放微信支付")
-	expect(t, a.Call("PUT", mpath, merchant.Input{Name: "x", Enabled: true, Routes: map[string]int64{"nope": ali.ID}}), http.StatusBadRequest, "不认识的支付方式")
+	expect(t, a.Call("PUT", mpath, merchant.Input{Name: "x", Enabled: true, Routes: apptest.Routes(map[string]int64{"wxpay": ali.ID})}), http.StatusBadRequest, "没有开放微信支付")
+	expect(t, a.Call("PUT", mpath, merchant.Input{Name: "x", Enabled: true, Routes: apptest.Routes(map[string]int64{"nope": ali.ID})}), http.StatusBadRequest, "不认识的支付方式")
 	expect(t, a.Call("PUT", mpath, merchant.Input{Name: "x", Enabled: true, Routes: alipay(ali.ID)}), http.StatusOK, "")
 	// 没传收款方式时保留原样。
 	expect(t, a.Call("PUT", mpath, merchant.Input{Name: "x", Enabled: true}), http.StatusOK, "")
-	if got, _ := e.App.Merchants.Get(e.Ctx, m.ID); got.Routes["alipay"] != ali.ID || len(got.Routes) != 1 {
+	if got, _ := e.App.Merchants.Get(e.Ctx, m.ID); !reflect.DeepEqual(got.Routes, alipay(ali.ID)) {
 		t.Errorf("商户的收款方式应为支付宝走 %d，实际 %v", ali.ID, got.Routes)
 	}
 	if v = channels(t, a)[ali.ID]; v.Merchants != 1 {

@@ -384,7 +384,15 @@ func TestOrders(t *testing.T) {
 type anomalyList struct {
 	Items []struct {
 		store.Anomaly
-		TradeNo     string             `json:"trade_no"`
+		Order *struct {
+			TradeNo    string `json:"trade_no"`
+			OutTradeNo string `json:"out_trade_no"`
+			Name       string `json:"name"`
+			Merchant   string `json:"merchant"`
+			Amount     int64  `json:"amount"`
+			PayAmount  int64  `json:"pay_amount"`
+			Channel    string `json:"channel"`
+		} `json:"order"`
 		Transaction *store.Transaction `json:"transaction"`
 	} `json:"items"`
 	Total int `json:"total"`
@@ -424,6 +432,11 @@ func TestLedgerAPI(t *testing.T) {
 	an := decode[anomalyList](t, a.Call("GET", "/web-api/admin/anomalies?status=open", nil))
 	if an.Total != 1 || an.Open != 1 || an.Items[0].Kind != store.AnomalyUnderpaid || an.Items[0].Transaction == nil || an.Items[0].Transaction.ExternalID != ext {
 		t.Fatalf("异常列表：%+v", an)
+	}
+	// 列表直接带出关联订单的商品、商户、商户订单号、金额和渠道。
+	if o := an.Items[0].Order; o == nil || o.TradeNo != tn || o.OutTradeNo != "L1" || o.Name != "x" || o.Merchant != "测试商户" ||
+		o.Amount != 500 || o.PayAmount != e.Order(tn).PayAmount || o.Channel != e.ChannelKey() {
+		t.Errorf("异常关联的订单：%+v", o)
 	}
 
 	// 人工关联：要理由、订单号要对。
@@ -466,7 +479,7 @@ func TestLedgerAPI(t *testing.T) {
 	if an = decode[anomalyList](t, a.Call("GET", "/web-api/admin/anomalies", nil)); an.Open != 0 {
 		t.Errorf("处理完还有 %d 条待处理", an.Open)
 	}
-	if an = decode[anomalyList](t, a.Call("GET", "/web-api/admin/anomalies?kind=unlinked", nil)); an.Total != 1 || an.Items[0].TradeNo != tn || an.Items[0].ResolvedBy != admin.Actor {
+	if an = decode[anomalyList](t, a.Call("GET", "/web-api/admin/anomalies?kind=unlinked", nil)); an.Total != 1 || an.Items[0].Order == nil || an.Items[0].Order.TradeNo != tn || an.Items[0].ResolvedBy != admin.Actor {
 		t.Errorf("按种类筛选异常：%+v", an)
 	}
 

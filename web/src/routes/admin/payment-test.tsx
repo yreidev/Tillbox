@@ -25,7 +25,7 @@ import {
   type StepStatus,
 } from '../../lib/ui'
 import { OrderDetail } from '../../components/order-detail'
-import { routeList } from '../../lib/routes'
+import { percent, routeList } from '../../lib/routes'
 
 export const Route = createFileRoute('/admin/payment-test')({ component: PaymentTestPage })
 
@@ -55,6 +55,8 @@ function PaymentTestPage() {
   const [merchantID, setMerchantID] = useState<number | undefined>()
   // 支付方式；choose 是不指定，由付款人在收银台选
   const [payType, setPayType] = useState('choose')
+  // 支付方式选了几个渠道时指定用哪个试；0 是和正常下单一样按权重挑
+  const [channelID, setChannelID] = useState(0)
   const [money, setMoney] = useState('1.00')
   const [version, setVersion] = useState<'1' | '2'>('1')
   const merchants = useQuery({
@@ -68,6 +70,9 @@ function PaymentTestPage() {
   // 只开了一种方式时就是它
   const typ = routes.length === 1 ? routes[0].type : payType
   const route = routes.find((r) => r.type === typ)
+  const picked = route?.channels.find((c) => c.id === channelID)
+  // 这次测试会走的渠道：只选了一个渠道或指定了渠道时确定，按权重挑时不确定
+  const only = picked ?? (route?.channels.length === 1 ? route.channels[0] : undefined)
   const tests = useQuery({
     queryKey: ['payment-tests'],
     queryFn: () => api.get<Page<OrderView>>('/web-api/admin/orders?is_test=true&page_size=20'),
@@ -81,6 +86,7 @@ function PaymentTestPage() {
         money: money.trim(),
         version: Number(version),
         pay_type: route?.type ?? '',
+        channel_id: picked?.id ?? 0,
       }),
     onSuccess: async (res) => {
       pick(res.order.id)
@@ -116,6 +122,7 @@ function PaymentTestPage() {
                 onChange={(id) => {
                   setMerchantID(id)
                   setPayType('choose')
+                  setChannelID(0)
                 }}
                 options={enabled.map(({ merchant: m }) => ({ value: m.id, label: `${m.name}（${m.id}）` }))}
                 description={
@@ -130,25 +137,47 @@ function PaymentTestPage() {
                 <SelectInput<string>
                   label="支付方式"
                   value={typ}
-                  onChange={(x) => setPayType(x ?? 'choose')}
+                  onChange={(x) => {
+                    setPayType(x ?? 'choose')
+                    setChannelID(0)
+                  }}
                   isDisabled={routes.length === 1}
                   options={[
                     ...(routes.length > 1 ? [{ value: 'choose', label: '不指定，付款人在收银台选' }] : []),
                     ...routes.map((r) => ({
                       value: r.type,
-                      label: `${r.label}（${r.channel?.name ?? '已删除的渠道'}）`,
+                      label: `${r.label}（${r.channels.map((c) => c.channel?.name ?? '已删除的渠道').join('、')}）`,
                     })),
                   ]}
                   description={
-                    route ? (
-                      <span className={cx(route.problem && 'text-danger')}>
-                        走渠道「{route.channel?.name ?? '已删除的渠道'}」
-                        {route.problem && `，收不了款：${route.problem}`}
+                    !route ? (
+                      '和调用方没带支付方式一样：收银台先让付款人选，选定后不能换'
+                    ) : only ? (
+                      <span className={cx(only.problem && 'text-danger')}>
+                        走渠道「{only.channel?.name ?? '已删除的渠道'}」{only.problem && `，收不了款：${only.problem}`}
                       </span>
                     ) : (
-                      '和调用方没带支付方式一样：收银台先让付款人选，选定后不能换'
+                      <span className={cx(route.down && 'text-danger')}>
+                        {route.down ? '选的渠道都收不了款' : '和正常下单一样，按权重在能收款的渠道里挑一个'}
+                      </span>
                     )
                   }
+                />
+              )}
+              {route && route.channels.length > 1 && (
+                <SelectInput<number>
+                  label="渠道"
+                  value={channelID}
+                  onChange={(x) => setChannelID(x ?? 0)}
+                  options={[
+                    { value: 0, label: '按权重挑' },
+                    ...route.channels.map((c) => ({
+                      value: c.id,
+                      label: `${c.channel?.name ?? '已删除的渠道'}${c.problem ? `（收不了款：${c.problem}）` : `（${percent(c.share)}）`}`,
+                      isDisabled: !!c.problem,
+                    })),
+                  ]}
+                  description="一个个试，确认每个渠道都能收款到账"
                 />
               )}
               <TextInput
@@ -159,9 +188,9 @@ function PaymentTestPage() {
                 onChange={setMoney}
                 validate={(v) => (/^\d+(\.\d{1,2})?$/.test(v.trim()) ? null : '填 0.01–100.00 之间的金额')}
                 description={
-                  route?.channel?.type === 'epay'
+                  only?.channel?.type === 'epay'
                     ? '0.01–100.00 元，第三方易支付渠道按原价付款'
-                    : route
+                    : only
                       ? '0.01–100.00 元，经营码渠道的应付金额会加上尾数'
                       : '0.01–100.00 元，经营码渠道的应付金额会加上尾数，第三方易支付渠道按原价付款'
                 }

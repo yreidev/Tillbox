@@ -72,17 +72,33 @@ type Merchant struct {
 	Remark       string `bun:"remark" json:"remark"`
 	CreatedAt    int64  `bun:"created_at" json:"created_at"`
 	UpdatedAt    int64  `bun:"updated_at" json:"updated_at"`
-	// Routes 是各支付方式走哪个渠道（支付方式 → 渠道编号），没开的方式不在里面。存在 merchant_routes 表。
-	Routes map[string]int64 `bun:"-" json:"routes"`
+	// Routes 是各支付方式走哪些渠道（支付方式 → 渠道和权重），没开的方式不在里面。存在 merchant_routes 表。
+	Routes Routes `bun:"-" json:"routes"`
 }
 
-// MerchantRoute 是商户的一种支付方式走哪个渠道。没有这一行的方式就是没开。
+// Routes 是商户的收款方式：支付方式 → 选的渠道，按渠道编号升序。一种方式选了几个渠道时新订单按权重随机分。
+type Routes map[string][]Route
+
+// Route 是一种支付方式选的一个渠道和它分新订单的权重。
+type Route struct {
+	ChannelID int64 `json:"channel_id"`
+	Weight    int   `json:"weight"`
+}
+
+// 权重范围
+const (
+	MinWeight = 1
+	MaxWeight = 100
+)
+
+// MerchantRoute 是商户的一种支付方式选的一个渠道。一种方式一行都没有就是没开。
 type MerchantRoute struct {
 	bun.BaseModel `bun:"table:merchant_routes"`
 
 	MerchantID int64  `bun:"merchant_id,pk"`
 	PayType    string `bun:"pay_type,pk"`
-	ChannelID  int64  `bun:"channel_id"`
+	ChannelID  int64  `bun:"channel_id,pk"`
+	Weight     int    `bun:"weight"`
 }
 
 // 渠道类型

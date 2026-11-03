@@ -252,6 +252,102 @@ func TestUpgradeToRoutesPostgres(t *testing.T) {
 	checkRoutesUpgrade(t, "postgres", pgSchema(t, dsn, "t_upgrade_routes"))
 }
 
+// 一种支付方式可以选几个渠道：原有的收款方式权重记 1；退回上一版时每种方式留权重最大的渠道。
+func checkWeightsUpgrade(t *testing.T, driver, dsn string) {
+	ctx := context.Background()
+	db := upgradeFrom(t, driver, dsn, 7, func(db *sql.DB) {
+		exec(t, db, `INSERT INTO channels(id,type,name,enabled,config,created_at,updated_at) VALUES
+			(1,'alipay_qr','a',TRUE,'{}',1,1), (2,'alipay_qr','b',TRUE,'{}',1,1), (3,'epay','c',TRUE,'{}',1,1)`)
+		exec(t, db, `INSERT INTO merchants(id,name,md5_key,created_at,updated_at) VALUES(1001,'m','k',1,1)`)
+		exec(t, db, `INSERT INTO merchant_routes(merchant_id,pay_type,channel_id) VALUES(1001,'alipay',1),(1001,'wxpay',3)`)
+	})
+	var rs []MerchantRoute
+	if err := db.NewSelect().Model(&rs).Order("pay_type", "channel_id").Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	want := []MerchantRoute{{MerchantID: 1001, PayType: "alipay", ChannelID: 1, Weight: 1}, {MerchantID: 1001, PayType: "wxpay", ChannelID: 3, Weight: 1}}
+	if !slices.Equal(rs, want) {
+		t.Errorf("升级后的收款方式 %v，应为 %v", rs, want)
+	}
+	if _, err := db.NewInsert().Model(&MerchantRoute{MerchantID: 1001, PayType: "alipay", ChannelID: 2, Weight: 5}).Exec(ctx); err != nil {
+		t.Fatalf("支付宝再选一个渠道：%v", err)
+	}
+
+	dir, dia := "migrations/sqlite", goose.DialectSQLite3
+	if driver == "postgres" {
+		dir, dia = "migrations/postgres", goose.DialectPostgres
+	}
+	sub, err := fs.Sub(migrations, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, err := goose.NewProvider(dia, db.DB, sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.DownTo(ctx, 7); err != nil {
+		t.Fatalf("退回 7：%v", err)
+	}
+	var got []string
+	if err := db.NewRaw("SELECT pay_type || '=' || CAST(channel_id AS TEXT) FROM merchant_routes ORDER BY pay_type").Scan(ctx, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got, []string{"alipay=2", "wxpay=3"}) {
+		t.Errorf("退回后的收款方式 %v", got)
+	}
+}
+
+// 经营码渠道的配置去掉网关；原来选了沙箱的渠道停用，其他的不动。
+func checkGatewayUpgrade(t *testing.T, driver, dsn string) {
+	ctx := context.Background()
+	db := upgradeFrom(t, driver, dsn, 8, func(db *sql.DB) {
+		exec(t, db, `INSERT INTO channels(id,type,name,enabled,config,created_at,updated_at) VALUES
+			(1,'alipay_qr','正式',TRUE,'{"app_id":"1","gateway":"https://openapi.alipay.com"}',1,1),
+			(2,'alipay_qr','沙箱',TRUE,'{"app_id":"2","gateway":"https://openapi-sandbox.dl.alipaydev.com"}',1,1),
+			(3,'alipay_qr','没填网关',TRUE,'{"app_id":"3"}',1,1),
+			(4,'epay','第三方',TRUE,'{"gateway":"x"}',1,1)`)
+	})
+	var cs []Channel
+	if err := db.NewSelect().Model(&cs).Order("id").Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, c := range cs {
+		var cfg map[string]any
+		if err := json.Unmarshal([]byte(c.Config), &cfg); err != nil {
+			t.Fatalf("%d 号渠道的配置：%v %q", c.ID, err, c.Config)
+		}
+		got = append(got, fmt.Sprintf("%d:%v:%v", c.ID, c.Enabled, cfg["gateway"]))
+	}
+	if want := []string{"1:true:<nil>", "2:false:<nil>", "3:true:<nil>", "4:true:x"}; !slices.Equal(got, want) {
+		t.Errorf("升级后的渠道 %v，应为 %v", got, want)
+	}
+}
+
+func TestUpgradeAlipayGatewaySQLite(t *testing.T) {
+	checkGatewayUpgrade(t, "sqlite", filepath.Join(t.TempDir(), "v8.db"))
+}
+
+func TestUpgradeAlipayGatewayPostgres(t *testing.T) {
+	dsn := os.Getenv("TILLBOX_TEST_PG_DSN")
+	if dsn == "" {
+		t.Skip("没有设置 TILLBOX_TEST_PG_DSN")
+	}
+	checkGatewayUpgrade(t, "postgres", pgSchema(t, dsn, "t_upgrade_gateway"))
+}
+
+func TestUpgradeRouteWeightsSQLite(t *testing.T) {
+	checkWeightsUpgrade(t, "sqlite", filepath.Join(t.TempDir(), "v7.db"))
+}
+
+func TestUpgradeRouteWeightsPostgres(t *testing.T) {
+	dsn := os.Getenv("TILLBOX_TEST_PG_DSN")
+	if dsn == "" {
+		t.Skip("没有设置 TILLBOX_TEST_PG_DSN")
+	}
+	checkWeightsUpgrade(t, "postgres", pgSchema(t, dsn, "t_upgrade_weights"))
+}
+
 // 全新安装没有支付宝设置时不建渠道；演示库里的假渠道订单归到演示渠道。
 func TestUpgradeDemoOrders(t *testing.T) {
 	ctx := context.Background()

@@ -15,10 +15,11 @@ import {
 } from '@gravity-ui/icons'
 import { ApiError, api, channelsQuery, meQuery } from '../../lib/api'
 import { time } from '../../lib/format'
-import type { ChannelView, Merchant, MerchantInput, Settings } from '../../lib/types'
-import { channelTypeText, payTypeLabel } from '../../lib/types'
-import { defaultRoutes, payTypeOrder, routeList } from '../../lib/routes'
+import type { ChannelView, Merchant, MerchantInput, RouteTarget, Routes as RouteMap, Settings } from '../../lib/types'
+import { channelTypeText, maxWeight, minWeight, payTypeLabel } from '../../lib/types'
+import { defaultRoutes, payTypeOrder, percent, routeList } from '../../lib/routes'
 import {
+  CheckboxInput,
   ConfirmDialog,
   ConflictNotice,
   Copyable,
@@ -27,11 +28,11 @@ import {
   Dialog,
   Empty,
   Notice,
+  NumberInput,
   PageHeader,
   Pill,
   RadioInput,
   Section,
-  SelectInput,
   Stack,
   SwitchInput,
   TextAreaInput,
@@ -39,6 +40,7 @@ import {
   RouterLink,
   toastError,
   toastOK,
+  cx,
   useRevision,
 } from '../../lib/ui'
 
@@ -386,17 +388,23 @@ function RowMenu({ row, onAction }: { row: Row; onAction: (k: 'toggle' | 'reset'
   )
 }
 
-// Routes 是商户开放的支付方式和各自走的渠道；收不了款的标红并说明原因。
+// Routes 是商户开放的支付方式和各自选的渠道；选了几个渠道时写上分到新订单的比例，收不了款的标红并说明原因。
 function Routes({ m, channels }: { m: Merchant; channels: ChannelView[] }) {
   const list = routeList(m.routes, channels)
   if (!list.length) return <Pill tone="danger">没开收款方式</Pill>
   return (
-    <ul className="flex max-w-64 flex-col gap-0.5 text-xs">
+    <ul className="flex max-w-72 flex-col gap-0.5 text-xs">
       {list.map((r) => (
-        <li key={r.type} className="truncate" title={r.problem || undefined}>
-          <span className="font-medium">{r.label}</span>
-          <span className="text-muted"> · {r.channel?.name ?? '已删除的渠道'}</span>
-          {r.problem && <span className="text-danger"> · {r.problem}</span>}
+        <li key={r.type}>
+          <span className={cx('font-medium', r.down && 'text-danger')}>{r.label}</span>
+          {r.channels.map((c) => (
+            <span key={c.id} className="text-muted">
+              {' · '}
+              {c.channel?.name ?? '已删除的渠道'}
+              {r.channels.length > 1 && !c.problem && <span className="tb-num"> {percent(c.share)}</span>}
+              {c.problem && <span className="text-danger">（{c.problem}）</span>}
+            </span>
+          ))}
         </li>
       ))}
     </ul>
@@ -521,7 +529,7 @@ function EditForm({
           </Section>
           <Section title="收款方式">
             <Typography.Paragraph size="sm" color="muted">
-              每种支付方式选一个渠道。调用方下单带了支付方式就走对应的渠道；没带、又开了几种时，付款人在收银台自己选，选定后不能换，只能取消订单。改了只影响之后的新订单。
+              每种支付方式选一个或几个渠道，选了几个时新订单按权重随机分到能收款的渠道。调用方下单带了支付方式就走对应的渠道；没带、又开了几种时，付款人在收银台自己选，选定后不能换，只能取消订单。改了只影响之后的新订单，已有订单一直走原来的渠道。
             </Typography.Paragraph>
             <RoutesInput routes={v.routes ?? {}} channels={channels} onChange={(x) => set('routes', x)} />
           </Section>
@@ -584,15 +592,16 @@ function EditForm({
   )
 }
 
-// RoutesInput 是每种支付方式选渠道的下拉框。只列有渠道开放的方式；已经选了、渠道后来不再开放的也列出来，标红让管理员改。
+// RoutesInput 是每种支付方式勾选渠道；勾了几个时每个填权重，新订单按权重在能收款的渠道里随机分。
+// 只列有渠道开放的方式；已经选了、渠道后来不再开放或删了的也列出来，标红让管理员改。
 function RoutesInput({
   routes,
   channels,
   onChange,
 }: {
-  routes: Record<string, number>
+  routes: RouteMap
   channels: ChannelView[]
-  onChange: (routes: Record<string, number>) => void
+  onChange: (routes: RouteMap) => void
 }) {
   if (!channels.length)
     return (
@@ -600,33 +609,74 @@ function RoutesInput({
         还没有支付渠道，请先到「支付渠道」页新建。
       </Typography.Paragraph>
     )
-  const problems = Object.fromEntries(routeList(routes, channels).map((r) => [r.type, r.problem]))
-  const types = payTypeOrder.filter((t) => routes[t] || channels.some((c) => (c.pay_types ?? []).includes(t)))
+  const listed = Object.fromEntries(routeList(routes, channels).map((r) => [r.type, r]))
+  const types = payTypeOrder.filter((t) => routes[t]?.length || channels.some((c) => (c.pay_types ?? []).includes(t)))
   const label = (c: ChannelView) => `${c.name}（${channelTypeText[c.type] ?? c.type}${c.enabled ? '' : '，已停用'}）`
+  const put = (t: string, list: RouteTarget[]) =>
+    onChange({ ...routes, [t]: [...list].sort((a, b) => a.channel_id - b.channel_id) })
   return (
     <>
       {types.map((t) => {
-        const cur = routes[t] ?? 0
-        const options = [
-          { value: 0, label: '不开' },
-          ...channels.filter((c) => (c.pay_types ?? []).includes(t)).map((c) => ({ value: c.id, label: label(c) })),
+        const cur = routes[t] ?? []
+        const ids = [
+          ...channels.filter((c) => (c.pay_types ?? []).includes(t)).map((c) => c.id),
+          ...cur
+            .map((r) => r.channel_id)
+            .filter((id) => !channels.some((c) => c.id === id && (c.pay_types ?? []).includes(t))),
         ]
-        if (cur && !options.some((o) => o.value === cur)) {
-          const c = channels.find((x) => x.id === cur)
-          options.push({ value: cur, label: c ? label(c) : `已删除的渠道（${cur}）` })
-        }
+        const r = listed[t]
         return (
-          <SelectInput<number>
-            key={t}
-            label={payTypeLabel(t)}
-            value={cur}
-            onChange={(x) => onChange({ ...routes, [t]: x ?? 0 })}
-            options={options}
-            description={problems[t] ? <span className="text-danger">收不了款：{problems[t]}</span> : undefined}
-          />
+          <fieldset key={t} className="flex flex-col gap-2">
+            <legend className="mb-1 text-sm font-medium">{payTypeLabel(t)}</legend>
+            {ids.map((id) => {
+              const c = channels.find((x) => x.id === id)
+              const sel = cur.find((x) => x.channel_id === id)
+              const rc = r?.channels.find((x) => x.id === id)
+              return (
+                <div key={id} className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <CheckboxInput
+                    className="min-w-0 flex-1"
+                    label={c ? label(c) : `已删除的渠道（${id}）`}
+                    description={rc?.problem ? <span className="text-danger">收不了款：{rc.problem}</span> : undefined}
+                    value={!!sel}
+                    onChange={(on) =>
+                      put(t, on ? [...cur, { channel_id: id, weight: 1 }] : cur.filter((x) => x.channel_id !== id))
+                    }
+                  />
+                  {sel && cur.length > 1 && (
+                    <div className="flex items-center gap-2">
+                      <NumberInput
+                        ariaLabel={`${c?.name ?? id} 的权重`}
+                        className="w-28"
+                        minValue={minWeight}
+                        maxValue={maxWeight}
+                        value={sel.weight}
+                        onChange={(w) =>
+                          put(
+                            t,
+                            cur.map((x) => (x.channel_id === id ? { ...x, weight: w ?? minWeight } : x)),
+                          )
+                        }
+                      />
+                      <span className="tb-num w-10 text-xs text-muted">
+                        {rc && !rc.problem ? percent(rc.share) : '—'}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+            {cur.length > 1 && (
+              <Typography.Paragraph size="xs" color="muted">
+                新订单按权重在能收款的渠道里随机分，右边是现在的比例；收不了款的渠道跳过，都收不了才下单失败。
+              </Typography.Paragraph>
+            )}
+          </fieldset>
         )
       })}
-      {!types.some((t) => routes[t]) && <Notice status="warning">一种支付方式都没开，这个商户下不了单。</Notice>}
+      {!types.some((t) => routes[t]?.length) && (
+        <Notice status="warning">一种支付方式都没开，这个商户下不了单。</Notice>
+      )}
     </>
   )
 }
@@ -663,7 +713,7 @@ function SecretModal({ secret, onClose }: { secret: Secret | null; onClose: () =
               {
                 key: '开放的支付方式（type）',
                 value: (() => {
-                  const open = payTypeOrder.filter((t) => secret.merchant.routes?.[t])
+                  const open = payTypeOrder.filter((t) => secret.merchant.routes?.[t]?.length)
                   return open.length
                     ? open.map((t) => `${payTypeLabel(t)} ${t}`).join('、')
                     : '还没开，先在编辑商户里选好收款方式'

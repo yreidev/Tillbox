@@ -205,7 +205,7 @@ func (c *cashier) pay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	undecided := o.Channel == ""
-	var mt payroute.Method
+	var rt payroute.Route
 	if undecided {
 		m, err := c.merchants.Get(r.Context(), o.MerchantID)
 		if err != nil {
@@ -213,22 +213,27 @@ func (c *cashier) pay(w http.ResponseWriter, r *http.Request) {
 			jsonOut(w, http.StatusInternalServerError, map[string]string{"error": "系统繁忙，请稍后重试"})
 			return
 		}
-		var ok bool
-		if mt, ok = payroute.Find(payroute.Methods(r.Context(), c.channels, m.Routes), in.Type); !ok {
+		mt, ok := payroute.Find(payroute.Methods(r.Context(), c.channels, m.Routes), in.Type)
+		if !ok {
 			jsonOut(w, http.StatusBadRequest, map[string]string{"error": "不支持这种支付方式"})
 			return
 		}
-		if !mt.Ready() {
-			jsonOut(w, http.StatusConflict, map[string]string{"error": "这种支付方式暂时不可用，请换一种"})
+		// 这种方式选了几个渠道时按权重挑一个能收这个金额的
+		if rt, err = mt.Pick(o.Amount, time.Now()); err != nil {
+			if errors.Is(err, payroute.ErrUnavailable) {
+				jsonOut(w, http.StatusConflict, map[string]string{"error": "这种支付方式暂时不可用，请换一种"})
+			} else {
+				c.payFailed(w, o, in.Type, true, err)
+			}
 			return
 		}
 	} else {
 		var ok bool
-		if mt, ok = payroute.Of(c.channels, o, in.Type); !ok {
+		if rt, ok = payroute.Of(c.channels, o, in.Type); !ok {
 			jsonOut(w, http.StatusBadRequest, map[string]string{"error": "不支持这种支付方式"})
 			return
 		}
-		if !slices.Contains(mt.Channel.PayTypes(), in.Type) {
+		if !slices.Contains(rt.Channel.PayTypes(), in.Type) {
 			err := errUnsupportedType
 			if o.PayType != "" {
 				err = order.ErrChosen
@@ -237,7 +242,7 @@ func (c *cashier) pay(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	up, err := payroute.Choose(r.Context(), c.orders, c.confirm, o, mt, c.baseURL(r))
+	rt, up, err := payroute.Choose(r.Context(), c.channels, c.orders, c.confirm, o, rt, c.baseURL(r))
 	if err != nil {
 		c.payFailed(w, o, in.Type, undecided, err)
 		return
@@ -245,7 +250,7 @@ func (c *cashier) pay(w http.ResponseWriter, r *http.Request) {
 	res := map[string]any{"pay_type": o.PayType, "pay_amount": epay.FormatCents(o.PayAmount)}
 	if up != nil {
 		res["guide"] = upstreamGuide(up)
-	} else if g, err := mt.Channel.Guide(r.Context(), o); err != nil {
+	} else if g, err := rt.Channel.Guide(r.Context(), o); err != nil {
 		slog.Error("读取收款指引失败", "trade_no", o.TradeNo, "channel", o.Channel, "err", err)
 	} else {
 		res["guide"] = g

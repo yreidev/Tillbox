@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -134,7 +135,7 @@ func setup(t *testing.T) (*apptest.Env, *fakeAlipay, *alipayqr.Channel) {
 	t.Cleanup(srv.Close)
 	cfg, _ := json.Marshal(alipayqr.Input{
 		AppID: f.appID, AppPrivateKey: appPriv, AlipayPublicKey: aliPub,
-		Gateway: srv.URL, QRCodeURL: "https://qr.alipay.com/fkx00000000000000000000",
+		QRCodeURL: "https://qr.alipay.com/fkx00000000000000000000",
 	})
 	row, err := e.App.Channels.Create(e.Ctx, registry.Input{Type: store.ChannelAlipayQR, Name: "经营码", Enabled: true, Config: cfg})
 	if err != nil {
@@ -145,8 +146,24 @@ func setup(t *testing.T) (*apptest.Env, *fakeAlipay, *alipayqr.Channel) {
 	}
 	inst, _, _ := e.App.Channels.Get(row.ID)
 	ch := inst.(*alipayqr.Channel)
-	ch.SetHTTPClient(srv.Client())
+	target, _ := url.Parse(srv.URL)
+	ch.SetHTTPClient(&http.Client{Transport: toServer{target, srv.Client().Transport}})
 	return e, f, ch
+}
+
+// toServer 把发往支付宝网关的请求转给假服务器。
+type toServer struct {
+	url *url.URL
+	rt  http.RoundTripper
+}
+
+func (s toServer) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.URL.Scheme+"://"+r.URL.Host != alipayqr.Gateway {
+		return nil, fmt.Errorf("请求发到了 %s，不是支付宝正式网关", r.URL.Host)
+	}
+	r = r.Clone(r.Context())
+	r.URL.Scheme, r.URL.Host = s.url.Scheme, s.url.Host
+	return s.rt.RoundTrip(r)
 }
 
 // update 用后台同样的方式改经营码渠道（私钥不填表示保留）。
@@ -156,7 +173,7 @@ func update(t *testing.T, e *apptest.Env, ch *alipayqr.Channel, enabled bool, ed
 	if err != nil {
 		t.Fatal(err)
 	}
-	in := alipayqr.Input{AppID: cfg.AppID, AlipayPublicKey: cfg.AlipayPublicKey, Gateway: cfg.Gateway, QRCodeURL: cfg.QRCodeURL, PayeeName: cfg.PayeeName}
+	in := alipayqr.Input{AppID: cfg.AppID, AlipayPublicKey: cfg.AlipayPublicKey, QRCodeURL: cfg.QRCodeURL, PayeeName: cfg.PayeeName}
 	edit(&in)
 	raw, _ := json.Marshal(in)
 	row := ch.Row()

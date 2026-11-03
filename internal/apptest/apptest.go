@@ -197,10 +197,19 @@ func (e *Env) NewMerchant(in *merchant.Input) *Merchant {
 	// Channel 记第一种支付方式（一般是支付宝）走的渠道
 	out := &Merchant{ID: m.ID, Key: key}
 	for _, t := range channel.TypeOrder {
-		if id := m.Routes[t]; id != 0 {
-			out.Channel = store.ChannelKey(id)
+		if rs := m.Routes[t]; len(rs) > 0 {
+			out.Channel = store.ChannelKey(rs[0].ChannelID)
 			break
 		}
+	}
+	return out
+}
+
+// Routes 把“支付方式 → 渠道编号”换成收款方式，每种方式一个渠道、权重 1；渠道编号是 0 的方式不开。
+func Routes(m map[string]int64) store.Routes {
+	out := store.Routes{}
+	for t, id := range m {
+		out[t] = []store.Route{{ChannelID: id, Weight: 1}}
 	}
 	return out
 }

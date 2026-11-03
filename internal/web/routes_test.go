@@ -60,7 +60,7 @@ func newRouted(t *testing.T) *routed {
 		t.Fatal(err)
 	}
 	r.epay = out.Channel
-	r.m = r.e.NewMerchant(&merchant.Input{Name: "分渠道商户", Enabled: true, Routes: map[string]int64{"alipay": r.e.Demo.Row().ID, "wxpay": r.epay.ID}})
+	r.m = r.e.NewMerchant(&merchant.Input{Name: "分渠道商户", Enabled: true, Routes: apptest.Routes(map[string]int64{"alipay": r.e.Demo.Row().ID, "wxpay": r.epay.ID})})
 	return r
 }
 
@@ -139,7 +139,7 @@ func TestOrderRoutesByType(t *testing.T) {
 	}
 
 	// 商户一种方式都没开：不建单。
-	none := e.NewMerchant(&merchant.Input{Name: "没开方式", Enabled: true, Routes: map[string]int64{"alipay": 0}})
+	none := e.NewMerchant(&merchant.Input{Name: "没开方式", Enabled: true, Routes: apptest.Routes(map[string]int64{"alipay": 0})})
 	if res := e.PostForm("/mapi.php", none.SignMD5(r.params("R6", "alipay"))).JSON(t); res["msg"] != "支付通道暂时不可用，请联系商户" {
 		t.Errorf("没开方式的商户下单：%v", res)
 	}
@@ -242,5 +242,75 @@ func TestCashierChooseUpstream(t *testing.T) {
 	}
 	if v := e.Get(base).JSON(t); v["pay_type"] != "wxpay" || fmt.Sprint(v["pay_types"]) != "[map[label:微信支付 type:wxpay]]" {
 		t.Errorf("选定后收银台：%v", v)
+	}
+}
+
+// 一种支付方式选了几个渠道：新订单在能收款的渠道里挑，同一订单号再下单沿用原订单的渠道，都收不了款才下单失败。
+func TestOrderPicksAmongRoutes(t *testing.T) {
+	r := newRouted(t)
+	e := r.e
+	demo := e.Demo.Row()
+	mpath := fmt.Sprintf("/web-api/admin/merchants/%d", r.m.ID)
+	setRoutes := func(alipay ...map[string]any) *apptest.Response {
+		return r.a.Call("PUT", mpath, map[string]any{"name": "分渠道商户", "enabled": true, "routes": map[string]any{"alipay": alipay}})
+	}
+	toggle := func(c store.Channel, config map[string]any, enabled bool) {
+		t.Helper()
+		if res := r.a.Call("PUT", fmt.Sprintf("/web-api/admin/channels/%d", c.ID), map[string]any{"name": c.Name, "enabled": enabled, "config": config}); res.Status != http.StatusOK {
+			t.Fatalf("启停渠道 %d：%d %s", c.ID, res.Status, res.Body)
+		}
+	}
+	epayConfig := map[string]any{"api_url": r.upURL, "version": 1, "pid": "1000", "types": []string{"alipay", "wxpay"}}
+
+	// 后台校验：同一种方式不能重复选一个渠道，权重 1–100，没填权重记 1。
+	for _, c := range []struct {
+		routes []map[string]any
+		msg    string
+	}{
+		{[]map[string]any{{"channel_id": demo.ID}, {"channel_id": demo.ID}}, "在支付宝里选了两次"},
+		{[]map[string]any{{"channel_id": demo.ID, "weight": 101}}, "权重要在 1 到 100 之间"},
+		{[]map[string]any{{"channel_id": demo.ID, "weight": -1}}, "权重要在 1 到 100 之间"},
+	} {
+		if res := setRoutes(c.routes...); res.Status != http.StatusBadRequest || !strings.Contains(string(res.Body), c.msg) {
+			t.Errorf("收款方式 %v：%d %s", c.routes, res.Status, res.Body)
+		}
+	}
+	if res := setRoutes(map[string]any{"channel_id": r.epay.ID, "weight": 3}, map[string]any{"channel_id": demo.ID}); res.Status != http.StatusOK {
+		t.Fatalf("支付宝选两个渠道：%d %s", res.Status, res.Body)
+	}
+	m, err := e.App.Merchants.Get(e.Ctx, r.m.ID)
+	if want := []store.Route{{ChannelID: demo.ID, Weight: 1}, {ChannelID: r.epay.ID, Weight: 3}}; err != nil || !slices.Equal(m.Routes["alipay"], want) {
+		t.Fatalf("存下的收款方式 %v（%v），应为 %v", m.Routes, err, want)
+	}
+
+	// 第三方渠道停用：支付宝都走演示渠道。
+	toggle(r.epay, epayConfig, false)
+	w1 := e.Order(create(t, e, r.m, r.params("W1", "alipay")))
+	if w1.Channel != e.ChannelKey() {
+		t.Errorf("第三方渠道停用时应走演示渠道：%+v", w1)
+	}
+	// 演示渠道停用、第三方渠道启用：支付宝走第三方渠道，当场预下单。
+	toggle(r.epay, epayConfig, true)
+	toggle(demo, map[string]any{}, false)
+	w2 := e.Order(create(t, e, r.m, r.params("W2", "alipay")))
+	if w2.Channel != r.epay.Key() || !slices.Equal(r.prepays(), []string{"alipay"}) {
+		t.Errorf("演示渠道停用时应走第三方渠道：%+v，预下单 %v", w2, r.prepays())
+	}
+	// 同一订单号再下单：沿用原订单的演示渠道，不会因为这次挑了第三方渠道而报“已经选了支付方式”。
+	if res := e.PostForm("/mapi.php", r.m.SignMD5(r.params("W1", "alipay"))).JSON(t); res["trade_no"] != w1.TradeNo {
+		t.Errorf("同一订单号再下单：%v", res)
+	}
+	// 收银台选支付宝：同样在能收款的渠道里挑。
+	tn, body := r.submit(t, "W3", "")
+	if tn == "" {
+		t.Fatalf("没带方式的跳转下单：%s", body)
+	}
+	if res, m := postJSON(t, e, "/web-api/cashier/"+tn+"/pay", map[string]string{"type": "alipay"}); res.Status != http.StatusOK || e.Order(tn).Channel != r.epay.Key() {
+		t.Errorf("收银台选支付宝：%d %v，订单 %+v", res.Status, m, e.Order(tn))
+	}
+	// 都停用：下单失败。
+	toggle(r.epay, epayConfig, false)
+	if res := e.PostForm("/mapi.php", r.m.SignMD5(r.params("W4", "alipay"))).JSON(t); res["msg"] != "支付通道暂时不可用，请联系商户" {
+		t.Errorf("渠道都停用时下单：%v", res)
 	}
 }

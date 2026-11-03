@@ -249,7 +249,7 @@ var ErrNotPending = errors.New("订单已经不是待支付状态")
 var ErrChosen = errors.New("这笔订单已经选了支付方式，不能再换")
 
 // Choose 给付款人还没选支付方式的订单（渠道为空）定下渠道和方式。noTail 为假时（按金额推断到账的渠道）
-// 当场在这个渠道分配加了尾数的应付金额。已经定成同样的渠道和方式时直接返回订单，定成别的时返回 ErrChosen。
+// 当场在这个渠道分配加了尾数的应付金额。已经定成同一种方式时直接返回订单（渠道可能不是 channelKey），定成别的方式时返回 ErrChosen。
 func (s *Service) Choose(ctx context.Context, id int64, channelKey, typ string, noTail bool) (*store.Order, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -262,7 +262,8 @@ func (s *Service) Choose(ctx context.Context, id int64, channelKey, typ string, 
 	switch {
 	case Effective(o, now) != store.OrderPending:
 		return nil, ErrNotPending
-	case o.Channel == channelKey && o.PayType == typ:
+	case o.Channel != "" && o.PayType == typ:
+		// 已经定了同一种方式：同一个渠道是重复请求；不同渠道是同时有别的请求从这种方式选的几个渠道里挑了另一个，用那边的
 		return o, nil
 	case o.Channel != "":
 		return nil, ErrChosen

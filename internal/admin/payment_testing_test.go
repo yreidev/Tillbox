@@ -99,7 +99,25 @@ func TestPaymentTestingPayType(t *testing.T) {
 		t.Errorf("指定支付宝：%+v", o)
 	}
 	expect(t, call("wxpay"), http.StatusBadRequest, "这个商户没有开放微信支付")
-	none := e.NewMerchant(&merchant.Input{Name: "没开方式", Enabled: true, Routes: map[string]int64{"alipay": 0}})
+
+	// 支付宝选了两个渠道：可以指定用哪个试，指定没选的渠道不行。
+	ch := decode[struct {
+		Channel store.Channel `json:"channel"`
+	}](t, a.Call("POST", "/web-api/admin/channels", map[string]any{"type": store.ChannelDemo, "name": "演示 2", "enabled": true, "config": map[string]any{}})).Channel
+	routes := store.Routes{"alipay": {{ChannelID: e.Demo.Row().ID, Weight: 1}, {ChannelID: ch.ID, Weight: 1}}}
+	if _, err := e.App.Merchants.Update(e.Ctx, m.ID, merchant.Input{Name: "测试商户", Enabled: true, Routes: routes}, -1); err != nil {
+		t.Fatal(err)
+	}
+	pick := func(id int64) *apptest.Response {
+		return a.Call("POST", "/web-api/admin/payment-tests", map[string]any{"merchant_id": m.ID, "money": "1.00", "version": ordersvc.V1, "pay_type": "alipay", "channel_id": id})
+	}
+	if o := decode[struct {
+		Order store.Order `json:"order"`
+	}](t, pick(ch.ID)).Order; o.Channel != ch.Key() {
+		t.Errorf("指定 %d 号渠道：%+v", ch.ID, o)
+	}
+	expect(t, pick(999), http.StatusBadRequest, "没有选这个渠道")
+	none := e.NewMerchant(&merchant.Input{Name: "没开方式", Enabled: true, Routes: apptest.Routes(map[string]int64{"alipay": 0})})
 	expect(t, a.Call("POST", "/web-api/admin/payment-tests", map[string]any{"merchant_id": none.ID, "money": "1.00", "version": ordersvc.V1, "notify_url": e.Hook.URL}), http.StatusBadRequest, "这个商户还没有开放任何支付方式")
 }
 
