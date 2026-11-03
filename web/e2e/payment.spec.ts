@@ -155,7 +155,9 @@ test('付错金额：流水异常里人工关联订单后通知商户', async ({
       .last()
     await card.getByRole('button', { name: '关联订单' }).click()
     const dialog = page.getByRole('dialog')
-    await dialog.getByRole('textbox', { name: '平台订单号' }).fill(tradeNo)
+    // 弹窗直接列出付款时间对得上的订单，点选这一单
+    await dialog.getByText(tradeNo).click()
+    await expect(dialog.getByRole('radio', { checked: true })).toHaveCount(1)
     await dialog.getByRole('textbox', { name: '理由' }).fill('付款人少付，已电话确认补差价')
     await dialog.getByRole('button', { name: '关联并标为已支付' }).click()
     await expect(page.getByText('已关联，订单已标记为已支付')).toBeVisible()

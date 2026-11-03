@@ -1,14 +1,14 @@
 import { Fragment, useState } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, ItemCard, ItemCardGroup, Separator, Surface, Typography } from '@yreidev/ui'
+import { Button, ItemCard, ItemCardGroup, Radio, RadioGroup, Separator, Surface, Typography } from '@yreidev/ui'
 import { CircleCheck, Link as LinkIcon } from '@gravity-ui/icons'
 import { LedgerRow } from '../../components/ledger-status'
 import { OrderDetail } from '../../components/order-detail'
 import { api, channelsQuery, overviewQuery, query } from '../../lib/api'
 import { time, yuan } from '../../lib/format'
-import type { AnomalyView, LedgerStatus, Page, Transaction } from '../../lib/types'
-import { anomalyText, invalidTxn, txnStateText } from '../../lib/types'
+import type { AnomalyView, LedgerStatus, OrderView, Page, Transaction } from '../../lib/types'
+import { anomalyText, invalidTxn, stateText, txnStateText } from '../../lib/types'
 import {
   DataTable,
   Empty,
@@ -25,9 +25,9 @@ import {
   SearchInput,
   SelectInput,
   Stack,
-  TextInput,
   Toolbar,
   toastOK,
+  useFieldVariant,
 } from '../../lib/ui'
 
 type View = 'open' | 'resolved' | 'transactions'
@@ -103,41 +103,126 @@ function LedgerPage() {
   )
 }
 
-// LinkModal 把一笔收入流水关联到订单（订单会变成已支付并通知商户）。
-function LinkModal({ txn, onClose }: { txn: Transaction | null; onClose: () => void }) {
+interface Linking {
+  txn: Transaction
+  /** 异常里指出的订单，打开时默认选中 */
+  suggest?: string
+}
+
+// LinkModal 把一笔收入流水关联到订单（订单会变成已支付并通知商户）。可选的订单由后端按这笔流水列出，也能按订单号或金额搜。
+function LinkModal({ linking, onClose }: { linking: Linking | null; onClose: () => void }) {
   const qc = useQueryClient()
-  const [tradeNo, setTradeNo] = useState('')
+  const [kw, setKw] = useState('')
+  const [q, setQ] = useState('')
+  const [picked, setPicked] = useState('')
+  const txn = linking?.txn
+  const list = useQuery({
+    queryKey: ['link-candidates', txn?.id, q],
+    queryFn: () => api.get<{ items: OrderView[] }>(`/web-api/admin/transactions/${txn!.id}/candidates${query({ q })}`),
+    enabled: !!txn,
+    // 同一笔流水换搜索词时保留上次的结果，换了流水不能先显示上一笔的候选
+    placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[1] === txn?.id ? prev : undefined),
+  })
+  const items = list.data?.items ?? []
+  // 只认列表里看得到的订单：搜了别的、选过的那单不在列表里时算没选
+  const shown = (v?: string) => !!v && items.some((o) => o.trade_no === v)
+  const value = picked ? (shown(picked) ? picked : '') : shown(linking?.suggest) ? linking!.suggest! : ''
+  const close = () => {
+    setKw('')
+    setQ('')
+    setPicked('')
+    onClose()
+  }
   return (
     <NoteModal
       title="把这笔到账关联到订单"
-      visible={txn !== null}
-      onCancel={() => {
-        setTradeNo('')
-        onClose()
-      }}
+      visible={!!txn}
+      onCancel={close}
       okText="关联并标为已支付"
       description="关联后订单标记为已支付，实收按这笔流水算，并开始通知商户。"
       onOK={async (note) => {
-        if (!/^\d{19}$/.test(tradeNo.trim())) throw new Error('平台订单号是 19 位数字')
-        await api.post(`/web-api/admin/transactions/${txn!.id}/link`, { trade_no: tradeNo.trim(), note })
+        if (!value) throw new Error('先选一个订单')
+        await api.post(`/web-api/admin/transactions/${txn!.id}/link`, { trade_no: value, note })
         toastOK('已关联，订单已标记为已支付')
-        setTradeNo('')
-        onClose()
+        close()
         void qc.invalidateQueries()
       }}
     >
       {txn && <TxnBox txn={txn} />}
-      <TextInput
-        label="平台订单号"
-        value={tradeNo}
-        onChange={setTradeNo}
-        placeholder="19 位数字，可在订单页按金额搜到"
-        inputMode="numeric"
-        maxLength={19}
-        mono
-        validate={(v) => (!v || /^\d{19}$/.test(v.trim()) ? null : '平台订单号是 19 位数字')}
+      <SearchInput
+        ariaLabel="搜索订单"
+        placeholder="平台订单号、商户订单号或金额"
+        value={kw}
+        onChange={setKw}
+        onSubmit={setQ}
       />
+      {list.isError ? (
+        <Notice status="danger">{list.error.message}</Notice>
+      ) : list.isPending ? (
+        <Loading />
+      ) : items.length === 0 ? (
+        <Typography.Paragraph size="sm" color="muted">
+          {q
+            ? '没有找到同一渠道、还没支付的订单。'
+            : '没有付款时间对得上的未支付订单（同一渠道、到账前创建、结束不超过一天），可以按订单号或金额搜。'}
+        </Typography.Paragraph>
+      ) : (
+        <div className="flex flex-col gap-2">
+          <Typography.Paragraph size="xs" color="muted">
+            {q ? '搜到的订单' : '付款时间对得上的订单'}：只列同一渠道、还没支付的，最多 20 个
+          </Typography.Paragraph>
+          <div className="max-h-80 overflow-y-auto">
+            <OrderPicker
+              items={items}
+              value={value}
+              onChange={setPicked}
+              note={(o) =>
+                o.trade_no === linking?.suggest ? '异常里指出的订单' : o.pay_amount === txn?.amount ? '金额相同' : ''
+              }
+            />
+          </div>
+        </div>
+      )}
     </NoteModal>
+  )
+}
+
+// OrderPicker 是可关联订单的单选列表，整行都能点（说明文字放在 Radio.Content 里，不用 RadioInput 的说明）。
+function OrderPicker({
+  items,
+  value,
+  onChange,
+  note,
+}: {
+  items: OrderView[]
+  value: string
+  onChange: (tradeNo: string) => void
+  note: (o: OrderView) => string
+}) {
+  const variant = useFieldVariant()
+  return (
+    <RadioGroup variant={variant} aria-label="选择订单" value={value} onChange={onChange}>
+      {items.map((o) => (
+        <Radio key={o.trade_no} value={o.trade_no}>
+          <Radio.Content className="items-start">
+            <Radio.Control className="mt-0.5">
+              <Radio.Indicator />
+            </Radio.Control>
+            <span className="flex min-w-0 flex-col gap-0.5">
+              <span>
+                {o.merchant_name || '已删除的商户'} · {o.name} · 应付{' '}
+                <span className="tb-num">¥{yuan(o.pay_amount)}</span>
+                {note(o) && <span className="text-accent"> · {note(o)}</span>}
+              </span>
+              <span className="text-xs font-normal break-all text-muted">
+                <Mono>{o.trade_no}</Mono> · 商户订单号 <Mono>{o.out_trade_no}</Mono> ·{' '}
+                <span className="tb-num">{time(o.created_at)}</span> 创建 · {stateText[o.state]}
+              </span>
+            </span>
+          </Radio.Content>
+        </Radio>
+      ))}
+    </RadioGroup>
   )
 }
 
@@ -160,7 +245,7 @@ function TxnBox({ txn }: { txn: Transaction }) {
 function Anomalies({ search, resolved }: { search: Search; resolved: boolean }) {
   const navigate = useNavigate({ from: Route.fullPath })
   const qc = useQueryClient()
-  const [linking, setLinking] = useState<Transaction | null>(null)
+  const [linking, setLinking] = useState<Linking | null>(null)
   const [resolving, setResolving] = useState<AnomalyView | null>(null)
   const [detail, setDetail] = useState<number | null>(null)
   const channels = useQuery(channelsQuery).data?.items ?? []
@@ -260,7 +345,7 @@ function Anomalies({ search, resolved }: { search: Search; resolved: boolean }) 
                   {!resolved && (
                     <ItemCard.Action className="ms-0 flex gap-2 ps-0 sm:ms-auto sm:ps-2">
                       {canLink && (
-                        <Button size="sm" onPress={() => setLinking(t)}>
+                        <Button size="sm" onPress={() => setLinking({ txn: t, suggest: o?.trade_no })}>
                           <LinkIcon />
                           关联订单
                         </Button>
@@ -284,7 +369,7 @@ function Anomalies({ search, resolved }: { search: Search; resolved: boolean }) 
           onChange={(p) => void navigate({ search: (s) => ({ ...s, page: p > 1 ? p : undefined }) })}
         />
       )}
-      <LinkModal txn={linking} onClose={() => setLinking(null)} />
+      <LinkModal linking={linking} onClose={() => setLinking(null)} />
       <NoteModal
         title="标为已处理"
         visible={resolving !== null}
@@ -305,7 +390,7 @@ function Anomalies({ search, resolved }: { search: Search; resolved: boolean }) 
 function Transactions({ search }: { search: Search }) {
   const navigate = useNavigate({ from: Route.fullPath })
   const [kw, setKw] = useState(search.q ?? '')
-  const [linking, setLinking] = useState<Transaction | null>(null)
+  const [linking, setLinking] = useState<Linking | null>(null)
   const [detail, setDetail] = useState<number | null>(null)
   const channels = useQuery(channelsQuery).data?.items ?? []
   const channelName = (key: string) => channels.find((c) => c.key === key)?.name ?? key
@@ -326,7 +411,7 @@ function Transactions({ search }: { search: Search }) {
     ) : invalidTxn(t) ? (
       <span className="text-muted">解析不了</span>
     ) : t.direction === 'in' ? (
-      <Button size="sm" variant="secondary" onPress={() => setLinking(t)}>
+      <Button size="sm" variant="secondary" onPress={() => setLinking({ txn: t })}>
         关联订单
       </Button>
     ) : (
@@ -446,7 +531,7 @@ function Transactions({ search }: { search: Search }) {
           { title: '订单', nowrap: true, render: order },
         ]}
       />
-      <LinkModal txn={linking} onClose={() => setLinking(null)} />
+      <LinkModal linking={linking} onClose={() => setLinking(null)} />
       <OrderDetail id={detail} onClose={() => setDetail(null)} />
     </>
   )

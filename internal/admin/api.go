@@ -98,6 +98,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /web-api/admin/orders/{id}/unlink", a.wrap(a.unlinkOrder))
 
 	mux.HandleFunc("GET /web-api/admin/transactions", a.wrap(a.listTransactions))
+	mux.HandleFunc("GET /web-api/admin/transactions/{id}/candidates", a.wrap(a.linkCandidates))
 	mux.HandleFunc("POST /web-api/admin/transactions/{id}/link", a.wrap(a.linkTransaction))
 	mux.HandleFunc("GET /web-api/admin/anomalies", a.wrap(a.listAnomalies))
 	mux.HandleFunc("POST /web-api/admin/anomalies/{id}/resolve", a.wrap(a.resolveAnomaly))

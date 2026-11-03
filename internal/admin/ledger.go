@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 	"strings"
@@ -106,6 +107,54 @@ func (a *API) linkTransaction(w http.ResponseWriter, r *http.Request) error {
 		return badRequest(err.Error())
 	}
 	ok(w, map[string]any{})
+	return nil
+}
+
+// linkCandidates 列出能和这笔流水关联的订单：同一渠道、还没支付，最多 20 个。不带关键词时只列付款时间对得上的
+// （到账前创建、到账时结束不超过一天），异常里指出的订单排最前，其次是应付金额相同的，再按创建时间从近到远；
+// 带关键词时按订单号或金额搜，不限时间。
+func (a *API) linkCandidates(w http.ResponseWriter, r *http.Request) error {
+	id, err := pathID(r, "id")
+	if err != nil {
+		return err
+	}
+	var t store.Transaction
+	err = a.DB.NewSelect().Model(&t).ExcludeColumn("raw").Where("id = ?", id).Scan(r.Context())
+	if errors.Is(err, sql.ErrNoRows) {
+		return notFound("流水不存在")
+	}
+	if err != nil {
+		return err
+	}
+	var hinted []int64
+	err = a.DB.NewSelect().Model((*store.Anomaly)(nil)).Column("order_id").
+		Where("transaction_id = ?", t.ID).Where("order_id <> 0").Scan(r.Context(), &hinted)
+	if err != nil {
+		return err
+	}
+	hinted = append(hinted, 0) // 订单编号从 1 开始，补一个 0 免得 IN 的列表为空
+	var os []store.Order
+	q := a.DB.NewSelect().Model(&os).Where("o.channel = ?", t.Channel).Where("o.status <> ?", store.OrderPaid)
+	if strings.TrimSpace(r.URL.Query().Get("q")) != "" {
+		q = a.orderFilter(r, q).Order("o.id DESC")
+	} else {
+		q = q.WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
+			return q.WhereGroup(" OR ", func(q *bun.SelectQuery) *bun.SelectQuery {
+				return q.Where("o.created_at < ?", t.OccurredAt+ledger.TimePrecision.Milliseconds()).
+					Where("o.expires_at >= ?", t.OccurredAt-ledger.LateWindow.Milliseconds())
+			}).WhereOr("o.id IN (?)", bun.List(hinted))
+		}).
+			OrderExpr("CASE WHEN o.id IN (?) THEN 0 WHEN o.pay_amount = ? THEN 1 ELSE 2 END", bun.List(hinted), t.Amount).
+			Order("o.created_at DESC")
+	}
+	if err := q.Limit(20).Scan(r.Context()); err != nil {
+		return err
+	}
+	items, err := a.views(r, os)
+	if err != nil {
+		return err
+	}
+	ok(w, map[string]any{"items": items})
 	return nil
 }
 

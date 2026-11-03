@@ -439,6 +439,22 @@ func TestLedgerAPI(t *testing.T) {
 		t.Errorf("异常关联的订单：%+v", o)
 	}
 
+	// 关联时可选的订单：异常里指出的那单排最前；也能按订单号搜。
+	other := order(t, e, m, "L2", "9", "y")
+	candidates := fmt.Sprintf("/web-api/admin/transactions/%d/candidates", txnID)
+	type candidateList struct {
+		Items []struct {
+			TradeNo string `json:"trade_no"`
+		} `json:"items"`
+	}
+	if c := decode[candidateList](t, a.Call("GET", candidates, nil)); len(c.Items) == 0 || c.Items[0].TradeNo != tn {
+		t.Errorf("候选订单应先列异常里的订单 %s：%+v", tn, c.Items)
+	}
+	if c := decode[candidateList](t, a.Call("GET", candidates+"?q="+other, nil)); len(c.Items) != 1 || c.Items[0].TradeNo != other {
+		t.Errorf("按订单号搜候选订单：%+v", c.Items)
+	}
+	expect(t, a.Call("GET", "/web-api/admin/transactions/999999/candidates", nil), http.StatusNotFound, "流水不存在")
+
 	// 人工关联：要理由、订单号要对。
 	link := fmt.Sprintf("/web-api/admin/transactions/%d/link", txnID)
 	expect(t, a.Call("POST", link, map[string]string{"trade_no": tn, "note": "  "}), http.StatusBadRequest, "请填写理由")
@@ -450,6 +466,11 @@ func TestLedgerAPI(t *testing.T) {
 		t.Fatalf("关联后订单：%+v", o)
 	}
 	expect(t, a.Call("POST", link, map[string]string{"trade_no": tn, "note": "x"}), http.StatusBadRequest, "已经关联")
+	for _, x := range decode[candidateList](t, a.Call("GET", candidates, nil)).Items {
+		if x.TradeNo == tn {
+			t.Errorf("已支付的订单 %s 不应再列为候选", tn)
+		}
+	}
 	txns2 := decode[struct {
 		TradeNos map[string]string `json:"trade_nos"`
 	}](t, a.Call("GET", "/web-api/admin/transactions", nil))
